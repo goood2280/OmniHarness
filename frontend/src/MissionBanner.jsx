@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
+import { t } from './i18n';
 
-export default function MissionBanner({ mission, onSave }) {
+export default function MissionBanner({ mission, onSave, lang }) {
   const needsInit = !mission || mission.placeholder;
   const [editing, setEditing] = useState(needsInit);
-  const [form, setForm] = useState(mission || { industry: '', philosophy: '', goal: '' });
+  const [form, setForm] = useState(
+    mission || { company: '', industry: '', philosophy: '', goal: '' }
+  );
 
   useEffect(() => {
     if (mission) setForm(mission);
@@ -12,11 +15,13 @@ export default function MissionBanner({ mission, onSave }) {
 
   const submit = async () => {
     const body = {
-      industry: form.industry.trim(),
-      philosophy: form.philosophy.trim(),
-      goal: form.goal.trim(),
+      company: (form.company || '').trim(),
+      industry: (form.industry || '').trim(),
+      philosophy: (form.philosophy || '').trim(),
+      goal: (form.goal || '').trim(),
     };
-    if (!body.industry || !body.goal) return; // require at least industry + goal
+    // company + industry + goal all required
+    if (!body.company || !body.industry || !body.goal) return;
     const r = await fetch('/api/mission', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -33,40 +38,54 @@ export default function MissionBanner({ mission, onSave }) {
     return (
       <div className={needsInit ? 'mission-overlay' : 'mission-edit'}>
         <div className="mission-card">
-          <h2>사훈 (Mission) 설정</h2>
-          <p className="mission-hint">
-            이 사훈은 <b>모든 에이전트의 공통 목표</b>가 됩니다. 업종 / 철학 / 목표를
-            적어주세요. 이후 상단 배너에서 언제든 수정 가능합니다.
-          </p>
+          <h2>{t('mission.modal_title', lang)}</h2>
+          <p className="mission-hint">{t('mission.hint', lang)}</p>
+
           <label>
-            <span>업종 <em>*</em></span>
+            <span>{t('mission.company', lang)} <em>*</em></span>
             <input
-              value={form.industry}
+              value={form.company || ''}
+              onChange={(e) => setForm({ ...form, company: e.target.value })}
+              placeholder={t('mission.company_ph', lang)}
+            />
+          </label>
+
+          <label>
+            <span>{t('mission.industry', lang)} <em>*</em></span>
+            <input
+              value={form.industry || ''}
               onChange={(e) => setForm({ ...form, industry: e.target.value })}
-              placeholder="예: 반도체 Fab IT / 수율 분석 도구"
+              placeholder={t('mission.industry_ph', lang)}
             />
           </label>
+
           <label>
-            <span>철학</span>
+            <span>{t('mission.philosophy', lang)}</span>
             <input
-              value={form.philosophy}
+              value={form.philosophy || ''}
               onChange={(e) => setForm({ ...form, philosophy: e.target.value })}
-              placeholder="예: 현장 엔지니어가 바로 쓸 수 있게, 복잡도는 숨기고 결정은 빠르게"
+              placeholder={t('mission.philosophy_ph', lang)}
             />
           </label>
+
           <label>
-            <span>목표 <em>*</em></span>
+            <span>{t('mission.goal', lang)} <em>*</em></span>
             <input
-              value={form.goal}
+              value={form.goal || ''}
               onChange={(e) => setForm({ ...form, goal: e.target.value })}
-              placeholder="예: 3개월 내 SPC/Tracker 통합 + 대시보드 자동 생성"
+              placeholder={t('mission.goal_ph', lang)}
             />
           </label>
+
           <div className="mission-actions">
             {!needsInit && (
-              <button className="btn-ghost" onClick={() => setEditing(false)}>취소</button>
+              <button className="btn-ghost" onClick={() => setEditing(false)}>
+                {t('mission.cancel', lang)}
+              </button>
             )}
-            <button className="btn-primary" onClick={submit}>저장</button>
+            <button className="btn-primary" onClick={submit}>
+              {t('mission.save', lang)}
+            </button>
           </div>
         </div>
       </div>
@@ -74,9 +93,15 @@ export default function MissionBanner({ mission, onSave }) {
   }
 
   return (
-    <div className="mission-banner" onClick={() => setEditing(true)} title="클릭해서 수정">
-      <div className="mission-label">사훈</div>
+    <div className="mission-banner" onClick={() => setEditing(true)} title={t('mission.edit_tooltip', lang)}>
+      <div className="mission-label">{t('mission.label', lang)}</div>
       <div className="mission-content">
+        {mission.company && (
+          <>
+            <span className="mission-chip mission-chip-company">🏢 {mission.company}</span>
+            <span className="mission-sep">/</span>
+          </>
+        )}
         <span className="mission-chip">{mission.industry || '—'}</span>
         {mission.philosophy && <span className="mission-sep">·</span>}
         {mission.philosophy && <span className="mission-philo">{mission.philosophy}</span>}

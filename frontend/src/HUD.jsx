@@ -1,44 +1,50 @@
+import { t, LANG_OPTIONS } from './i18n';
+
 export default function HUD({
   agentCount,
-  morale,
   opus,
   sonnet,
   haiku,
   working,
   waiting,
   idle,
-  demo,
   cost,
-  onToggleDemo,
+  lang,
+  onLangChange,
+  onGuideOpen,
 }) {
   return (
     <div className="hud">
       <div className="hud-left">
-        <span>AGENTS: {agentCount}</span>
+        <span>{t('hud.agents', lang)}: {agentCount}</span>
         <span className="sep">|</span>
-        <span className="state state-working">⚡ WORK {working}</span>
-        <span className="state state-waiting">⏳ WAIT {waiting}</span>
-        <span className="state state-idle">💤 IDLE {idle}</span>
+        <span className="state state-working">⚡ {t('hud.work', lang)} {working}</span>
+        <span className="state state-waiting">⏳ {t('hud.wait', lang)} {waiting}</span>
+        <span className="state state-idle">💤 {t('hud.idle', lang)} {idle}</span>
       </div>
       <div className="hud-center">
         <span className="cost">
-          💰 <span className="cost-num">${(cost || 0).toFixed(4)}</span>
+          💰 {t('hud.cost', lang)} <span className="cost-num">${(cost || 0).toFixed(4)}</span>
         </span>
-        <span className="sep">|</span>
-        <span style={{ color: '#4caf50' }}>MORALE {morale}%</span>
       </div>
       <div className="hud-right">
         <span className="pill pill-opus">OPUS {opus}</span>
         <span className="pill pill-sonnet">SONNET {sonnet}</span>
-        {haiku > 0 && <span className="pill pill-haiku">HAIKU {haiku}</span>}
-        <button
-          className={demo ? 'demo-btn demo-on' : 'demo-btn demo-off'}
-          onClick={() => onToggleDemo && onToggleDemo(!demo)}
-          title={demo ? '시뮬레이션 중 — 클릭해서 끄기' : '실제 작업 대기 중 — 클릭해서 시뮬레이션'}
-        >
-          DEMO {demo ? 'ON' : 'OFF'}
+        <span className="pill pill-haiku">HAIKU {haiku || 0}</span>
+        <button className="guide-btn" onClick={onGuideOpen} title="Bedrock 환경 설정 가이드">
+          ☁ {t('guide.button', lang)}
         </button>
-        <span>YEAR: 2026</span>
+        <div className="lang-switch" role="group" aria-label={t('hud.lang', lang)}>
+          {LANG_OPTIONS.map((opt) => (
+            <button
+              key={opt.code}
+              className={'lang-btn' + (lang === opt.code ? ' active' : '')}
+              onClick={() => onLangChange && onLangChange(opt.code)}
+            >
+              {opt.code.toUpperCase()}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

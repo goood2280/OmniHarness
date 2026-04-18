@@ -1,26 +1,43 @@
 import { useEffect, useRef, useState } from 'react';
-import PixelOffice from './PixelOffice';
+import OrgTree from './OrgTree';
 import HUD from './HUD';
 import AgentPanel from './AgentPanel';
 import MissionBanner from './MissionBanner';
 import TabPanel from './TabPanel';
+import McpPanel from './McpPanel';
+import BedrockGuide from './BedrockGuide';
+import { t, DEFAULT_LANG } from './i18n';
 
 const POLL_FAST_MS = 1500;
 const POLL_SLOW_MS = 4000;
+const LANG_KEY = 'omni.lang';
 
 export default function App() {
   const [topology, setTopology] = useState(null);
   const [activity, setActivity] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [reports, setReports] = useState([]);
+  const [requirements, setRequirements] = useState([]);
+  const [backlog, setBacklog] = useState([]);
+  const [org, setOrg] = useState(null);
+  const [mcps, setMcps] = useState([]);
   const [mission, setMission] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [selectedMcp, setSelectedMcp] = useState(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [err, setErr] = useState(null);
+  const [lang, setLang] = useState(() => {
+    try { return localStorage.getItem(LANG_KEY) || DEFAULT_LANG; }
+    catch { return DEFAULT_LANG; }
+  });
 
   const fastRef = useRef();
   const slowRef = useRef();
 
-  // Fast poll: topology (agent states + counters)
+  useEffect(() => {
+    try { localStorage.setItem(LANG_KEY, lang); } catch { /* ignore */ }
+  }, [lang]);
+
   useEffect(() => {
     let alive = true;
     const load = () =>
@@ -36,13 +53,9 @@ export default function App() {
         .catch((e) => alive && setErr(String(e)));
     load();
     fastRef.current = setInterval(load, POLL_FAST_MS);
-    return () => {
-      alive = false;
-      clearInterval(fastRef.current);
-    };
+    return () => { alive = false; clearInterval(fastRef.current); };
   }, []);
 
-  // Slow poll: activity + questions + reports
   useEffect(() => {
     let alive = true;
     const loadAll = () => {
@@ -52,39 +65,35 @@ export default function App() {
         .then((d) => alive && setQuestions(d.questions || []));
       fetch('/api/reports').then((r) => r.json())
         .then((d) => alive && setReports(d.reports || []));
+      fetch('/api/requirements').then((r) => r.ok ? r.json() : {})
+        .then((d) => alive && setRequirements(d.requirements || d.items || []));
+      fetch('/api/backlog').then((r) => r.ok ? r.json() : {})
+        .then((d) => alive && setBacklog(d.items || d.backlog || []));
     };
     loadAll();
     slowRef.current = setInterval(loadAll, POLL_SLOW_MS);
-    return () => {
-      alive = false;
-      clearInterval(slowRef.current);
-    };
+    return () => { alive = false; clearInterval(slowRef.current); };
   }, []);
 
-  // Mission: initial load
   useEffect(() => {
     fetch('/api/mission').then((r) => r.json()).then(setMission);
+    fetch('/api/org').then((r) => r.ok ? r.json() : null).then(setOrg);
+    fetch('/api/mcps').then((r) => r.ok ? r.json() : null)
+      .then((d) => setMcps((d && (d.mcps || d.items)) || []));
   }, []);
 
-  const reloadQuestions = () => {
+  const reloadQuestions = () =>
     fetch('/api/questions').then((r) => r.json())
       .then((d) => setQuestions(d.questions || []));
-  };
-  const reloadReports = () => {
+  const reloadReports = () =>
     fetch('/api/reports').then((r) => r.json())
       .then((d) => setReports(d.reports || []));
-  };
+  const reloadRequirements = () =>
+    fetch('/api/requirements').then((r) => r.json())
+      .then((d) => setRequirements(d.requirements || d.items || []));
 
-  const toggleDemo = async (enabled) => {
-    await fetch('/api/demo', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    });
-  };
-
-  if (err) return <div className="loading">ERROR: {err}</div>;
-  if (!topology || !mission) return <div className="loading">LOADING OMNIHARNESS...</div>;
+  if (err) return <div className="loading">{t('loading.error', lang)}: {err}</div>;
+  if (!topology || !mission) return <div className="loading">{t('loading.app', lang)}</div>;
 
   const opus = topology.agents.filter((a) => a.model === 'opus').length;
   const sonnet = topology.agents.filter((a) => a.model === 'sonnet').length;
@@ -92,65 +101,55 @@ export default function App() {
   const working = topology.agents.filter((a) => a.state === 'working').length;
   const waiting = topology.agents.filter((a) => a.state === 'waiting').length;
   const idle = topology.agents.filter((a) => a.state === 'idle').length;
-  const morale = Math.round(
-    ((opus * 100 + sonnet * 85 + haiku * 70) / Math.max(topology.total, 1)) || 0
-  );
 
   return (
     <div className="app">
-      <MissionBanner mission={mission} onSave={setMission} />
+      <MissionBanner mission={mission} onSave={setMission} lang={lang} />
       <HUD
         agentCount={topology.total}
-        morale={morale}
         opus={opus}
         sonnet={sonnet}
         haiku={haiku}
         working={working}
         waiting={waiting}
         idle={idle}
-        demo={topology.demo}
         cost={topology.cost_total}
-        onToggleDemo={toggleDemo}
+        lang={lang}
+        onLangChange={setLang}
+        onGuideOpen={() => setGuideOpen(true)}
       />
-      {!topology.demo && working === 0 && (
+      {working === 0 && (
         <div className="awaiting-bar">
-          실제 작업 대기 중 — FabCanvas.ai 에서 Claude Code 로 작업을 시작하면
-          해당 에이전트들이 활성화됩니다.
-          <span className="muted"> (또는 우측 <b>DEMO</b> 버튼으로 시뮬레이션 확인)</span>
+          <span className="awaiting-title">{t('awaiting.title', lang)}</span>
+          <span className="awaiting-body">
+            {mission.company || 'FabCanvas'} 생성을 위하여 Claude Code 가 돌아가면 거기에 맞는 에이전트들이 활성화됩니다.
+          </span>
         </div>
       )}
-      <PixelOffice topology={topology} onSelect={setSelected} selected={selected} />
-      <Legend teams={topology.teams} agents={topology.agents} />
+      <OrgTree
+        topology={topology}
+        org={org}
+        onSelect={setSelected}
+        selected={selected}
+        lang={lang}
+        mission={mission}
+      />
       <TabPanel
         topology={topology}
         activity={activity}
         questions={questions}
         reports={reports}
+        requirements={requirements}
+        backlog={backlog}
+        org={org}
         onReloadQuestions={reloadQuestions}
         onReloadReports={reloadReports}
+        onReloadRequirements={reloadRequirements}
+        lang={lang}
       />
-      <AgentPanel agent={selected} onClose={() => setSelected(null)} />
-    </div>
-  );
-}
-
-function Legend({ teams, agents }) {
-  const byTeam = (id) => agents.filter((a) => a.team === id);
-  return (
-    <div className="legend">
-      {teams.map((t) => {
-        const members = byTeam(t.id);
-        const working = members.filter((a) => a.state === 'working').length;
-        return (
-          <div key={t.id} className="legend-team">
-            <span className="legend-title">{t.label}</span>
-            <span className="legend-stats">
-              <span className="legend-count">{members.length}</span>
-              {working > 0 && <span className="legend-working">⚡{working}</span>}
-            </span>
-          </div>
-        );
-      })}
+      <AgentPanel agent={selected} onClose={() => setSelected(null)} lang={lang} />
+      <McpPanel mcp={selectedMcp} onClose={() => setSelectedMcp(null)} lang={lang} />
+      <BedrockGuide open={guideOpen} onClose={() => setGuideOpen(false)} lang={lang} />
     </div>
   );
 }

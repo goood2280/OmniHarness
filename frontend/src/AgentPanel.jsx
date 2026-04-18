@@ -1,6 +1,13 @@
-export default function AgentPanel({ agent, onClose }) {
+import { t } from './i18n';
+
+export default function AgentPanel({ agent, onClose, lang }) {
   if (!agent) return null;
   const state = agent.state || 'idle';
+  const stateLabel =
+    state === 'working' ? '⚡ ' + t('hud.work', lang).toLowerCase()
+    : state === 'waiting' ? '⏳ ' + t('hud.wait', lang).toLowerCase()
+    : '💤 ' + t('hud.idle', lang).toLowerCase();
+
   return (
     <div className="panel">
       <button className="close" onClick={onClose} aria-label="Close">×</button>
@@ -10,10 +17,8 @@ export default function AgentPanel({ agent, onClose }) {
           <h2>{agent.name}</h2>
           <div className="meta">
             <span className={`pill pill-${agent.model}`}>{agent.model}</span>
-            <span className={`chip chip-state-${state}`}>
-              {state === 'working' ? '⚡ working' : state === 'waiting' ? '⏳ waiting' : '💤 idle'}
-            </span>
-            <span className="chip">{agent.team}</span>
+            <span className={`chip chip-state-${state}`}>{stateLabel}</span>
+            <span className="chip">{t(`team.${agent.team}`, lang)}</span>
             <span className="chip">{agent.species}</span>
           </div>
         </div>
@@ -21,15 +26,15 @@ export default function AgentPanel({ agent, onClose }) {
 
       <p className="desc">{agent.description}</p>
 
-      <h3>TOOLS</h3>
+      <h3>{t('panel.tools', lang)}</h3>
       <ul className="tools">
-        {(agent.tools || []).map((t) => (
-          <li key={t}>{t}</li>
+        {(agent.tools || []).map((tool) => (
+          <li key={tool}>{tool}</li>
         ))}
       </ul>
 
       <details>
-        <summary>System Prompt</summary>
+        <summary>{t('panel.system_prompt', lang)}</summary>
         <pre>{agent.body}</pre>
       </details>
     </div>
