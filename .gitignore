@@ -1,0 +1,28 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# ── Node ──
+node_modules/
+frontend/dist/
+npm-debug.log*
+.pnpm-store/
+
+# ── OS / Editor ──
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Runtime data (per-deployment) ──
+mission.json
+reports/*.md
+!reports/.gitkeep
+
+# ── Scratch ──
+_scratch_*
