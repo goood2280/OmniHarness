@@ -155,8 +155,10 @@ button { font-family: inherit; cursor: pointer; }
   display: flex; gap: 8px; align-items: center;
   padding: 4px 2px; cursor: pointer; user-select: none;
   border-radius: 3px;
+  outline: none;
 }
 .scene-todo-row:hover { background: rgba(255, 213, 79, 0.08); }
+.scene-todo-row:focus-visible { box-shadow: 0 0 0 2px #ffd54f; }
 .scene-todo-row.active { background: rgba(255, 213, 79, 0.12); }
 .scene-todo-label { color: #ffd54f; flex-shrink: 0; min-width: 70px; }
 .scene-todo-count {
@@ -170,10 +172,15 @@ button { font-family: inherit; cursor: pointer; }
 
 .scene-todo-detail {
   margin: 2px 2px 6px;
-  max-height: 280px; overflow-y: auto;
+  max-height: 280px; overflow-y: auto; overflow-x: hidden;
   border-left: 2px solid #3a3a3a;
   padding: 6px 10px;
   display: flex; flex-direction: column; gap: 8px;
+  animation: scene-todo-open 0.16s ease-out;
+}
+@keyframes scene-todo-open {
+  from { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
+  to   { opacity: 1; max-height: 280px; padding-top: 6px; padding-bottom: 6px; }
 }
 .scene-todo-item {
   font-size: 12px; color: #ccc; line-height: 1.5;
@@ -2168,6 +2175,9 @@ button { font-family: inherit; cursor: pointer; }
 .chip-state-waiting { background: #3a4858; color: #c7d4e0; }
 .chip-state-idle    { background: #333; color: #999; }
 .panel .desc { font-family: 'Pretendard', sans-serif; font-size: 13px; line-height: 1.55; background: #262626; padding: 12px; border-left: 3px solid #ffeb3b; margin-bottom: 16px; color: #ddd; }
+.agent-salary { font-family: 'Pretendard', sans-serif; background: #2a1f0c; border-left: 3px solid #ffab40; padding: 8px 12px; margin: 0 0 14px; color: #ffd8a8; }
+.agent-salary-main { font-size: 12px; font-weight: 700; letter-spacing: 0.3px; line-height: 1.4; }
+.agent-salary-sub { font-size: 11px; color: #9a8a70; margin-top: 3px; line-height: 1.4; }
 .panel h3 { font-size: 9px; color: #ffeb3b; margin: 14px 0 8px; letter-spacing: 1px; }
 .panel .tools { list-style: none; display: flex; flex-wrap: wrap; gap: 5px; }
 .panel .tools li { background: #2c2c2c; padding: 5px 7px; font-size: 8px; border: 1px solid #444; }
@@ -2266,3 +2276,73 @@ button { font-family: inherit; cursor: pointer; }
 .tutorial-lang-flag { font-size: 42px; line-height: 1; }
 .tutorial-lang-name { font-size: 18px; font-weight: 700; color: #ffeb3b; }
 .tutorial-lang-sub { font-size: 12px; color: #999; }
+
+/* Floating "submit requirement" card — sits just below the HUD on the
+   right, deliberately separated from the lang/model pills so it doesn't
+   clutter that cluster. */
+.hud-req-submit {
+  position: fixed;
+  top: 58px; right: 16px;
+  z-index: 7;
+  font-family: 'Pretendard', sans-serif;
+}
+.hud-req-trigger {
+  background: #2a2210; color: #ffeb3b; border: 2px solid #ffd54f;
+  padding: 6px 12px; font-size: 12px; font-weight: 700;
+  cursor: pointer; border-radius: 3px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+}
+.hud-req-trigger:hover { background: #3a2f18; }
+.hud-req-card {
+  position: absolute; top: 38px; right: 0;
+  width: 320px;
+  background: rgba(14, 14, 18, 0.97);
+  border: 2px solid #ffd54f;
+  border-radius: 4px;
+  padding: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.55);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.hud-req-row { display: flex; align-items: center; gap: 8px; }
+.hud-req-label { color: #ffd54f; font-size: 12px; font-weight: 700; min-width: 48px; }
+.hud-req-select {
+  flex: 1;
+  background: #141414; color: #eee;
+  border: 1px solid #444; border-radius: 3px;
+  padding: 5px 6px; font-size: 12px;
+  font-family: 'Pretendard', sans-serif;
+}
+.hud-req-textarea {
+  width: 100%;
+  background: #0c0c0f; color: #eee;
+  border: 1px solid #444; border-radius: 3px;
+  padding: 8px; font-size: 13px; resize: vertical;
+  font-family: 'Pretendard', sans-serif;
+  box-sizing: border-box;
+}
+.hud-req-textarea:focus { outline: none; border-color: #ffd54f; }
+.hud-req-actions { display: flex; justify-content: flex-end; }
+.hud-req-submit-btn {
+  background: #ffd54f; color: #1a1a1a;
+  border: none; border-radius: 3px;
+  padding: 6px 16px; font-size: 12px; font-weight: 700;
+  cursor: pointer;
+}
+.hud-req-submit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.hud-req-submit-btn:hover:not(:disabled) { background: #ffeb3b; }
+.hud-req-toast {
+  position: absolute; top: 38px; right: 0;
+  background: #1a2a18; color: #a5e3a0;
+  border: 1px solid #3e6e3a; border-radius: 3px;
+  padding: 8px 12px; font-size: 12px; font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  max-width: 320px;
+  animation: hud-req-toast-in 0.18s ease-out;
+}
+.hud-req-toast-err {
+  background: #2a1818; color: #e3a0a0; border-color: #6e3a3a;
+}
+@keyframes hud-req-toast-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

@@ -131,6 +131,7 @@ cp .env.example .env
 - `ANTHROPIC_API_KEY` **또는** `CLAUDE_CODE_USE_BEDROCK=1 + AWS_*` — LLM 팀 제안 + 💬 웹 채팅 orchestrator 에 필요
 - `GEMINI_API_KEY` — 캐릭터 · 아이템 이미지 생성용 (Nano Banana / Gemini 2.5 Flash Image)
 - `OMNIHARNESS_URL` — CLI 훅이 POST 할 주소 (기본 `http://localhost:8082`)
+- `OMNI_AUTO_COORDINATE=1` — `POST /api/requirements` 시 자동으로 코디네이터 태움 ([자세히](#-코디네이터--모드))
 
 ---
 
@@ -459,6 +460,16 @@ Not affiliated with Anthropic.
 
 Reverse chronological. Each entry is a short "why" — the commit log has the "how".
 
+### `v1.2` — 2026-04-19 — **Active coordinator · Persistence · Backlog pipeline · Salary panel**
+- 🎼 **Active coordinator engine** (`backend/coordinator.py`) — `POST /api/requirements` now auto-plays the whole `orchestrator → dev-lead → dev-* → (ux-reviewer) → eval-lead → reporter → orchestrator done` timeline so the office scene lights up even without an external driver. LLM-free, provider-agnostic. See the **🎼 Coordinator & Modes** section below. Enable with `OMNI_AUTO_COORDINATE=1` or per-request `"auto_coordinate": true`.
+- 💾 **State persistence** — REQUIREMENTS · ACTIVITY · BACKLOG · QUESTIONS · REPORTS · AGENT_STATES · the full cost ledger (COST_TOTAL · COST_BY_MODEL · COST_BY_AGENT · TOKENS_BY_MODEL) now round-trip through `backend/_state/state.json`. The viewer survives restarts and regains the in-flight backlog without any re-seeding.
+- 🔁 **`--reload` removed** from the `omni` launch config — file watcher was wiping in-memory state on every unrelated edit in the workspace. If you need hot-reload for OmniHarness itself, re-enable locally with caution.
+- 📥 **Backlog pipeline** — new endpoints `POST /api/backlog`, `POST /api/backlog/{bid}/status`, `POST /api/backlog/{bid}`. `POST /api/requirements` now auto-seeds a linked backlog item, and requirement status transitions (`planning` → `in_progress` → `done` / `cancelled`) automatically mirror onto the linked backlog row.
+- 👁️ **SceneTodo click-to-expand fix** — the left-dock `작업중 / 예정 / 완료` rows now actually open. Root cause: `OfficeScene` marquee-zoom pointerdown capture was swallowing synthesized clicks on the overlay. Fixed with `stopPropagation` on the `.scene-todo` root + keyboard/`aria-expanded` support + per-section empty-state copy.
+- 💰 **Salary panel on characters** — the agent detail sidebar now shows each character's "월급" (token rate for their assigned model) plus the cumulative spend on that model. Rate table lives in `frontend/src/salary.js` so it's easy to retune as Anthropic pricing evolves.
+- 🐛 **`state = working` no longer 500s** — `COST_BY_AGENT` was referenced without being declared; added to the module-level state block and to the persisted payload so per-agent spend now accumulates across restarts.
+- ✂️ **UI trims** — mission-banner edit pen (✎) removed (editing flows through the onboarding wizard already), floating `✚ 요구사항 제출` HUD card removed in favor of the bottom Requirements tab.
+
 ### `v1.1` — 2026-04-19 — **LLM team design · Tutorial · Unified sidebars**
 - 🧠 **Real LLM team proposal** via Anthropic / Bedrock. The orchestrator *reasons* about the project and can invent project-specific agents outside the fixed catalog. Keyword heuristic kept only as a fallback with a ⚠️ warning in the wizard.
 - 🎓 **First-run Tutorial overlay** — language picker (🇰🇷 / 🇺🇸) + 8-tab guided tour. Persists via localStorage, runs exactly once.
@@ -488,3 +499,41 @@ Reverse chronological. Each entry is a short "why" — the commit log has the "h
 ---
 
 <sub>⚖️ OmniHarness is an independent project. Not affiliated with Anthropic. "Claude" and "Claude Code" are trademarks of Anthropic.</sub>
+
+---
+
+## 🎼 Coordinator & Modes
+
+<details open>
+<summary><b>🇰🇷 한국어</b></summary>
+
+OmniHarness 는 **코디네이터(coordinator)** 를 갖고 있어, 사용자가 `POST /api/requirements` 로 요구사항을 등록하면 에이전트 팀 루트가 자동으로 **시각화**됩니다 — 어떤 리드/팀원이 지금 `working` 이고 어떤 애가 `idle` 인지 오피스 화면에 바로 보입니다.
+
+- 📜 **LLM-free 재생기**: `backend/coordinator.py` 는 요구사항 텍스트를 짧은 키워드 휴리스틱(UI / ML / API / 도메인 / fallback)으로 분류한 뒤, `orchestrator → dev-lead → dev-* → (ux-reviewer) → eval-lead → reporter → orchestrator done` 을 단계적으로 재생합니다. LLM 호출은 전혀 하지 않습니다.
+- 🔀 **두 모드**
+  - **Claude Code 모드** — 당신의 Claude Code 세션이 훅으로 activity 를 POST 하고, 코디네이터는 같은 시퀀스를 병행 재생합니다. 외부 활동이 감지되면 해당 agent 의 step 타이머가 자동 연장됩니다.
+  - **Bedrock 모드 (향후)** — 외부 executor 가 AWS Bedrock 에서 코드 작업을 수행하는 동안 코디네이터는 동일한 단계 시퀀스로 UI 를 움직입니다. 플랜 정제용 LLM hook 자리는 `coordinator.py` 에 TODO 주석으로만 남겨뒀습니다.
+- 🎚️ **켜는 법** — `OMNI_AUTO_COORDINATE=1` 환경변수를 주거나, 요청 body 에 `"auto_coordinate": true` 를 넣습니다.
+- 🕹️ **API**
+  - `POST /api/coordinate/{rid}/start` 수동 시작
+  - `POST /api/coordinate/{rid}/stop` 중단
+  - `GET  /api/coordinate` 실행 중 목록
+
+</details>
+
+<details>
+<summary><b>🇺🇸 English</b></summary>
+
+OmniHarness includes an **active coordinator**. When you `POST /api/requirements`, the team routing is played back **visually** — leads and members light up `working` / `idle` in the office scene with no external driver required.
+
+- 📜 **LLM-free playback**: `backend/coordinator.py` classifies the requirement text with a tiny keyword heuristic (UI / ML / API / domain / fallback) and walks a plan of `orchestrator → dev-lead → dev-* → (ux-reviewer) → eval-lead → reporter → orchestrator done`. Never calls an LLM.
+- 🔀 **Two modes**
+  - **Claude Code mode** — your session fires activity POSTs from hooks; the coordinator plays the same sequence in parallel and extends a step's timer if the external hook keeps the agent busy.
+  - **Bedrock mode (future)** — an executor drives real code work on AWS Bedrock while the coordinator plays the same visual sequence. A placeholder hook for LLM-based plan refinement is left as a TODO comment in `coordinator.py`.
+- 🎚️ **Enable** — set `OMNI_AUTO_COORDINATE=1`, or include `"auto_coordinate": true` in the request body.
+- 🕹️ **API**
+  - `POST /api/coordinate/{rid}/start` — manual trigger
+  - `POST /api/coordinate/{rid}/stop` — cancel
+  - `GET  /api/coordinate` — currently-running coordinators
+
+</details>

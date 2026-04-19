@@ -32,6 +32,9 @@ reports/*.json
 # Per-project mission dirs
 projects/
 
+# Coordinator / viewer runtime state (REQ · ACT · BACKLOG · STATES · COST ledger)
+backend/_state/
+
 # ── Scratch ──
 _scratch_*
 

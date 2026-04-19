@@ -84,10 +84,17 @@ def _bootstrap_env():
 
 _bootstrap_env()
 
+import asyncio
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+# Active coordinator (state-transition playback engine). Imported here
+# only for the start/stop/list endpoints below — the module itself
+# does a late `import app` to read/write our in-memory tables.
+import coordinator as _coordinator
 
 ROOT = Path(__file__).parent.parent
 TEMPLATES = ROOT / "templates" / "agents"
@@ -157,6 +164,7 @@ PRICING = {
 STATES: dict[str, State] = {}
 COST_TOTAL: float = 0.0
 COST_BY_MODEL: dict[str, float] = {"opus": 0.0, "sonnet": 0.0, "haiku": 0.0}
+COST_BY_AGENT: dict[str, dict] = {}
 TOKENS_BY_MODEL: dict[str, dict] = {
     "opus":   {"in": 0, "out": 0},
     "sonnet": {"in": 0, "out": 0},
@@ -170,6 +178,72 @@ REPORTS: list[dict] = []
 REQUIREMENTS: list[dict] = []
 BACKLOG: list[dict] = []
 EVOLUTION: list[dict] = []
+
+# ── 영속화 경로 ─────────────────────────────────────────────────────
+# 서버 재기동에도 살아남아야 할 상태는 여기에 json dump.
+_STATE_DIR = Path(__file__).parent / "_state"
+_STATE_PATH = _STATE_DIR / "state.json"
+
+
+def _known_agent_names() -> list[str]:
+    """BASE + DEV_CATALOG + DOMAIN_CATALOG 를 합친 26 에이전트."""
+    return list(BASE_ROLES.keys()) + list(DEV_CATALOG) + list(DOMAIN_CATALOG)
+
+
+def _save_state() -> None:
+    """모든 mutation 함수 끝에서 호출. 저부하라 debounce 없음."""
+    try:
+        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "requirements": REQUIREMENTS,
+            "activity": list(ACTIVITY),
+            "backlog": BACKLOG,
+            "questions": QUESTIONS,
+            "reports": REPORTS,
+            "agent_states": STATES,
+            "cost_total": COST_TOTAL,
+            "cost_by_model": COST_BY_MODEL,
+            "cost_by_agent": COST_BY_AGENT,
+            "tokens_by_model": TOKENS_BY_MODEL,
+        }
+        _STATE_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        # 쓰기 실패해도 런타임은 계속 — 다음 mutation 에서 재시도.
+        pass
+
+
+def _load_state() -> None:
+    """부팅 시 1회. 파일 없으면 조용히 스킵."""
+    global ACTIVITY, COST_TOTAL
+    if not _STATE_PATH.exists():
+        return
+    try:
+        data = json.loads(_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    REQUIREMENTS[:] = list(data.get("requirements") or [])
+    BACKLOG[:] = list(data.get("backlog") or [])
+    QUESTIONS[:] = list(data.get("questions") or [])
+    REPORTS[:] = list(data.get("reports") or [])
+    ACTIVITY = deque(list(data.get("activity") or []), maxlen=300)
+    STATES.clear()
+    STATES.update(data.get("agent_states") or {})
+    COST_TOTAL = float(data.get("cost_total") or 0.0)
+    COST_BY_MODEL.update(data.get("cost_by_model") or {})
+    COST_BY_AGENT.update(data.get("cost_by_agent") or {})
+    for k, v in (data.get("tokens_by_model") or {}).items():
+        if k in TOKENS_BY_MODEL and isinstance(v, dict):
+            TOKENS_BY_MODEL[k].update(v)
+
+
+_load_state()
+
+# KNOWN 에이전트 프리시드: 파일에 state 있으면 유지, 없으면 idle.
+for _n in _known_agent_names():
+    STATES.setdefault(_n, "idle")
 
 DEFAULT_MISSION = {
     "company": "",
@@ -263,10 +337,35 @@ class TeamConfirm(BaseModel):
 class RequirementIn(BaseModel):
     text: str
     assigned_to: str | None = None
+    # If true (or if env OMNI_AUTO_COORDINATE=1), the backend also spins
+    # up a coordinator task to auto-play agent state transitions for
+    # this requirement.
+    auto_coordinate: bool | None = None
 
 
 class RequirementStatus(BaseModel):
     status: Literal["new", "planning", "in_progress", "done", "cancelled"]
+
+
+class BacklogIn(BaseModel):
+    title: str
+    team: str | None = None
+    priority: str | None = None
+    source_req_id: str | None = None
+
+
+class BacklogStatus(BaseModel):
+    status: Literal["next", "planning", "working", "done", "cancelled"]
+
+
+class BacklogPatch(BaseModel):
+    # id / created_at 제외 임의 필드 업데이트용.
+    title: str | None = None
+    team: str | None = None
+    priority: str | None = None
+    assignee: str | None = None
+    source_req_id: str | None = None
+    status: Literal["next", "planning", "working", "done", "cancelled"] | None = None
 
 
 class KnowledgeIn(BaseModel):
@@ -550,6 +649,7 @@ def log_event(agent: str, kind: str, detail: str) -> dict:
         "detail": detail,
     }
     ACTIVITY.append(evt)
+    _save_state()
     return evt
 
 
@@ -662,6 +762,7 @@ def set_state(name: str, update: StateUpdate):
         log_event(name, "state", f"{prev} → {update.state}")
         if update.state == "working":
             _accrue_for_state_working(name)
+    _save_state()
     return {"name": name, "state": update.state}
 
 
@@ -1211,11 +1312,71 @@ def create_requirement(r: RequirementIn):
     }
     REQUIREMENTS.insert(0, item)
     log_event("orchestrator", "requirement", "🎯 사용자 요구사항 수신: " + r.text[:120])
+    # 요구사항 → 자동 백로그 시딩
+    bid = str(uuid.uuid4())[:8]
+    backlog_item = {
+        "id": bid,
+        "title": (r.text or "")[:60],
+        "team": r.assigned_to or "orchestrator",
+        "priority": "high",
+        "status": "next",
+        "source_req_id": rid,
+        "created_at": now_iso(),
+    }
+    BACKLOG.insert(0, backlog_item)
+    _save_state()
+    # ── Optional auto-coordination ───────────────────────────────────
+    # If OMNI_AUTO_COORDINATE=1 in env, or the request body opts in,
+    # kick off the coordinator task in the background. We swallow
+    # failures here — creating the requirement must succeed even if
+    # the coordinator can't start (e.g. no running event loop).
+    auto = bool(r.auto_coordinate) or os.environ.get("OMNI_AUTO_COORDINATE") in ("1", "true", "True")
+    if auto:
+        try:
+            _coordinator.start_coordinator(rid)
+        except Exception as e:
+            log_event("orchestrator", "coord", f"coordinator 자동시작 실패: {e}")
     return item
+
+
+@app.post("/api/coordinate/{rid}/start")
+def coordinate_start(rid: str):
+    """Manually start the coordinator for an existing requirement."""
+    for item in REQUIREMENTS:
+        if item["id"] == rid:
+            try:
+                ok = _coordinator.start_coordinator(rid)
+            except Exception as e:
+                raise HTTPException(500, f"failed to start: {e}")
+            if not ok:
+                raise HTTPException(409, "coordinator already running for this rid")
+            return {"rid": rid, "started": True}
+    raise HTTPException(404, "requirement not found")
+
+
+@app.post("/api/coordinate/{rid}/stop")
+def coordinate_stop(rid: str):
+    ok = _coordinator.stop_coordinator(rid)
+    if not ok:
+        raise HTTPException(404, "no coordinator running for this rid")
+    return {"rid": rid, "stopped": True}
+
+
+@app.get("/api/coordinate")
+def coordinate_list():
+    return {"running": _coordinator.list_coordinators()}
 
 
 @app.post("/api/requirements/{rid}/status")
 def set_requirement_status(rid: str, body: RequirementStatus):
+    # requirement → backlog 상태 매핑
+    _req_to_backlog = {
+        "planning":    "planning",
+        "in_progress": "working",
+        "done":        "done",
+        "cancelled":   "cancelled",
+        # "new" 는 기본 "next" 유지 — 매핑 없음
+    }
     for item in REQUIREMENTS:
         if item["id"] == rid:
             prev = item["status"]
@@ -1225,6 +1386,13 @@ def set_requirement_status(rid: str, body: RequirementStatus):
                 "requirement",
                 f"요구사항 상태 {prev} → {body.status}",
             )
+            # 같은 source_req_id 를 가진 backlog item 들 연동
+            new_bstatus = _req_to_backlog.get(body.status)
+            if new_bstatus:
+                for b in BACKLOG:
+                    if b.get("source_req_id") == rid:
+                        b["status"] = new_bstatus
+            _save_state()
             return item
     raise HTTPException(404, "requirement not found")
 
@@ -1242,6 +1410,16 @@ def cancel_requirement(rid: str):
                 "requirement",
                 f"요구사항 취소됨 ({prev} → cancelled)",
             )
+            # backlog 연동
+            for b in BACKLOG:
+                if b.get("source_req_id") == rid:
+                    b["status"] = "cancelled"
+            # Stop any running coordinator for this rid as well.
+            try:
+                _coordinator.stop_coordinator(rid)
+            except Exception:
+                pass
+            _save_state()
             return item
     raise HTTPException(404, "requirement not found")
 
@@ -1250,6 +1428,56 @@ def cancel_requirement(rid: str):
 @app.get("/api/backlog")
 def get_backlog():
     return {"items": list(BACKLOG)}
+
+
+@app.post("/api/backlog")
+def create_backlog(b: BacklogIn):
+    bid = str(uuid.uuid4())[:8]
+    item = {
+        "id": bid,
+        "title": b.title,
+        "team": b.team,
+        "priority": b.priority,
+        "status": "next",
+        "source_req_id": b.source_req_id,
+        "created_at": now_iso(),
+    }
+    BACKLOG.insert(0, item)
+    log_event(b.team or "orchestrator", "backlog", f"백로그 추가: {b.title[:60]}")
+    return item
+
+
+@app.post("/api/backlog/{bid}/status")
+def set_backlog_status(bid: str, body: BacklogStatus):
+    for item in BACKLOG:
+        if item["id"] == bid:
+            prev = item.get("status")
+            item["status"] = body.status
+            log_event(
+                item.get("team") or "orchestrator",
+                "backlog",
+                f"백로그 {bid} 상태 {prev} → {body.status}",
+            )
+            return item
+    raise HTTPException(404, "backlog item not found")
+
+
+@app.post("/api/backlog/{bid}")
+def patch_backlog(bid: str, body: BacklogPatch):
+    for item in BACKLOG:
+        if item["id"] == bid:
+            patch = body.model_dump(exclude_none=True)
+            # id / created_at 불변
+            patch.pop("id", None)
+            patch.pop("created_at", None)
+            item.update(patch)
+            log_event(
+                item.get("team") or "orchestrator",
+                "backlog",
+                f"백로그 {bid} 갱신: {', '.join(patch.keys()) or '(no-op)'}",
+            )
+            return item
+    raise HTTPException(404, "backlog item not found")
 
 
 # ── Cost ─────────────────────────────────────────────────────────────
@@ -1632,6 +1860,13 @@ def api_chat_provider():
 @app.on_event("startup")
 async def _boot():
     log_event("system", "boot", "OmniHarness Viewer 가동 — 실제 작업 대기 중")
+    # Capture the running event loop so sync endpoints (running on
+    # FastAPI's threadpool) can schedule coordinator coroutines back
+    # onto the main loop.
+    try:
+        _coordinator.set_main_loop(asyncio.get_running_loop())
+    except Exception:
+        pass
 
 
 # ── Serve SPA ────────────────────────────────────────────────────────

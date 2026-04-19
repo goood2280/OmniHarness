@@ -623,21 +623,56 @@ function SceneTodo({ lang, working, backlog, reports, activity }) {
     }));
   }, [reports, lang]);
 
+  // Per-section empty-state copy — the product owner specifically asked
+  // for these three phrasings instead of one generic "nothing here".
+  const emptyCopy = (key) => {
+    if (lang === 'ko') {
+      if (key === 'working') return '진행중인 작업이 없어요.';
+      if (key === 'next')    return '예정된 작업이 없어요.';
+      return '완료된 작업이 없어요.';
+    }
+    if (key === 'working') return 'No work in progress.';
+    if (key === 'next')    return 'No upcoming work.';
+    return 'No completed work yet.';
+  };
+
   const sections = [
     { key: 'working', icon: '⚡', label: lang === 'ko' ? '작업중' : 'Working', items: workingItems },
     { key: 'next',    icon: '📋', label: lang === 'ko' ? '예정'   : 'Next',    items: nextItems },
     { key: 'done',    icon: '✅', label: lang === 'ko' ? '완료'   : 'Done',    items: doneItems },
   ];
 
+  // Parent OfficeScene captures pointerdown for its marquee-zoom — if we
+  // let the event bubble, the parent grabs pointer capture and the
+  // synthesized click never lands on the row (same bug Desk hit earlier,
+  // see onPointerDown comment in Desk above).
+  const stopPtr = (e) => e.stopPropagation();
+
+  const toggle = (key) => setOpenSection((cur) => (cur === key ? null : key));
+
   return (
-    <div className="scene-todo">
+    <div
+      className="scene-todo"
+      onPointerDown={stopPtr}
+      onPointerUp={stopPtr}
+    >
       {sections.map((s) => {
         const isOpen = openSection === s.key;
         return (
           <div key={s.key}>
             <div
               className={`scene-todo-row${isOpen ? ' active' : ''}`}
-              onClick={() => setOpenSection(isOpen ? null : s.key)}
+              role="button"
+              tabIndex={0}
+              aria-expanded={isOpen}
+              aria-controls={`scene-todo-detail-${s.key}`}
+              onClick={() => toggle(s.key)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggle(s.key);
+                }
+              }}
             >
               <span className="scene-todo-label">{s.icon} {s.label}</span>
               <span className={`scene-todo-count${s.items.length === 0 ? ' zero' : ''}`}>
@@ -646,11 +681,9 @@ function SceneTodo({ lang, working, backlog, reports, activity }) {
               <span className="scene-todo-caret">›</span>
             </div>
             {isOpen && (
-              <div className="scene-todo-detail">
+              <div className="scene-todo-detail" id={`scene-todo-detail-${s.key}`}>
                 {s.items.length === 0 ? (
-                  <div className="scene-todo-item-empty">
-                    {lang === 'ko' ? '아직 없음' : 'Nothing here yet.'}
-                  </div>
+                  <div className="scene-todo-item-empty">{emptyCopy(s.key)}</div>
                 ) : (
                   s.items.map((item, i) => (
                     <div className="scene-todo-item" key={i}>

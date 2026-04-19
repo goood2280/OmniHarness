@@ -257,7 +257,7 @@ export default function App() {
         lang={lang}
         mode={mode}
       />
-      <AgentPanel agent={selected} onClose={() => setSelected(null)} lang={lang} mode={mode} />
+      <AgentPanel agent={selected} onClose={() => setSelected(null)} lang={lang} mode={mode} costByModel={topology.cost_by_model} />
       <McpPanel mcp={selectedMcp} onClose={() => setSelectedMcp(null)} lang={lang} />
       <BedrockGuide open={guideOpen} onClose={() => setGuideOpen(false)} lang={lang} />
       <Tutorial lang={lang} setLang={setLang} onDone={() => {}} />

@@ -1,5 +1,6 @@
 import Sprite, { POSE } from './Sprite';
 import { t } from './i18n';
+import { formatSalary } from './salary';
 
 // Pose to use in the panel headshot — the standing portrait reads
 // best in a small box; falls back to the work pose when the agent is
@@ -26,7 +27,7 @@ function buildMdView(agent) {
   return lines.join('\n');
 }
 
-export default function AgentPanel({ agent, onClose, lang, mode = 'custom' }) {
+export default function AgentPanel({ agent, onClose, lang, mode = 'custom', costByModel }) {
   if (!agent) return null;
   const state = agent.state || 'idle';
   const stateLabel =
@@ -56,6 +57,18 @@ export default function AgentPanel({ agent, onClose, lang, mode = 'custom' }) {
             {!isGeneral && agent.species && <span className="chip">{agent.species}</span>}
           </div>
         </div>
+      </div>
+
+      {/* Salary line — token pricing for this agent's model. */}
+      <div className="agent-salary" title={lang === 'ko' ? '이 에이전트가 쓰는 모델의 토큰당 비용' : "Token pricing for this agent's model"}>
+        <div className="agent-salary-main">{formatSalary(agent.model, lang)}</div>
+        {costByModel && typeof costByModel[agent.model] === 'number' && (
+          <div className="agent-salary-sub">
+            {lang === 'ko'
+              ? `누적 지출 (${agent.model} 모델 전체): $${costByModel[agent.model].toFixed(4)}`
+              : `Cumulative spend (all ${agent.model} agents): $${costByModel[agent.model].toFixed(4)}`}
+          </div>
+        )}
       </div>
 
       {/* General mode is about observing one Claude instance; config
