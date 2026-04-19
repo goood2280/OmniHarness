@@ -15,7 +15,7 @@
 
 🌐 **언어 / Language** — 원하는 섹션을 펼쳐 보세요. / Expand the section you want.
 
-<details open>
+<details>
 <summary><b>🇰🇷 한국어</b></summary>
 
 <br>
