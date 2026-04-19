@@ -22,7 +22,15 @@ Thumbs.db
 # ── Runtime data (per-deployment) ──
 mission.json
 reports/*.md
+reports/*.json
 !reports/.gitkeep
+
+# Per-process session state (active project + last mode)
+.active_project
+.app_mode
+
+# Per-project mission dirs
+projects/
 
 # ── Scratch ──
 _scratch_*

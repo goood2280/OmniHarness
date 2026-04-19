@@ -1,8 +1,17 @@
+// Questions.jsx — bidirectional translation pipeline visible to the user.
+//
+//   Agent raw (technical)
+//      → mgmt-lead translates for user ("pending_user")
+//      → user answers freely ("pending_answer_translation")
+//      → mgmt-lead restates for the agent ("answered")
+//
+// The user only has to write in plain language — mgmt-lead handles both
+// directions of translation.
+
 import { useState } from 'react';
 import { t } from './i18n';
 
 export default function Questions({ items, onReload, lang }) {
-  // 답변 완료된 질문은 목록에서 숨김 — "답을 보낸 질문은 더 이상 안 보이게".
   const active = items.filter((q) => q.status !== 'answered');
   if (!active.length) {
     return (
@@ -28,6 +37,7 @@ function QuestionCard({ q, onReload, lang }) {
   const statusLabel = {
     pending_translation: t('q.status_pending_translation', lang),
     pending_user: t('q.status_pending_user', lang),
+    pending_answer_translation: t('q.status_pending_answer_translation', lang),
     answered: t('q.status_answered', lang),
   }[q.status] || q.status;
 
@@ -57,8 +67,12 @@ function QuestionCard({ q, onReload, lang }) {
         <span className="q-time">{(q.created || '').slice(11, 19)}</span>
       </div>
 
+      {/* mgmt-lead's user-facing translation */}
       {q.translated ? (
-        <div className="q-translated">{q.translated}</div>
+        <div className="q-translated">
+          <span className="q-arrow q-arrow-in">mgmt-lead →</span>
+          {q.translated}
+        </div>
       ) : (
         <div className="q-pending-trans">{t('q.translating', lang)}</div>
       )}
@@ -81,9 +95,23 @@ function QuestionCard({ q, onReload, lang }) {
         </div>
       )}
 
-      {q.status === 'answered' && (
+      {q.answer && (
         <div className="q-answer">
-          <span className="q-answer-label">{t('q.my_answer', lang)}</span> {q.answer}
+          <span className="q-answer-label">{t('q.my_answer', lang)}:</span> {q.answer}
+        </div>
+      )}
+
+      {q.status === 'pending_answer_translation' && (
+        <div className="q-answer-translating">
+          <span className="q-arrow q-arrow-out">→ {q.agent}</span>
+          {t('q.status_pending_answer_translation', lang)}
+        </div>
+      )}
+
+      {q.answer_structured && (
+        <div className="q-structured">
+          <span className="q-arrow q-arrow-out">mgmt-lead → {q.agent}:</span>
+          {q.answer_structured}
         </div>
       )}
     </div>

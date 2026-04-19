@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from './i18n';
+import SharedSprite, { POSE } from './Sprite';
 
 // ── World + layout ─────────────────────────────────────────────────
 const WORLD_W = 1640;
 const WORLD_H = 1200;
-const SPRITE_W = 64;       // rendered sprite box (source 96×192 → scaled down)
+const SPRITE_W = 128;      // square sprite cell (sheet panels are 256×256)
 const SPRITE_H = 128;
-const NODE_W = 110;
-const NODE_H = 180;
+const NODE_W = 156;
+const NODE_H = 200;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2.0;
 const ZOOM_STEP = 0.1;
@@ -66,21 +67,21 @@ const CONNECTORS = [
   ['orchestrator', 'dev-lead'],
 ];
 
+// OrgTree nodes use the shared sprite-sheet renderer so the Custom
+// Project view stays visually in lockstep with the General Viewer's
+// HQ + subagent panels. Pose is tied to the agent's live state — same
+// mapping rules Sprite uses internally — so a "working" agent in the
+// org chart shows the typing pose, "waiting" shows the zZz pose, etc.
+function poseForOrg(agent) {
+  if (agent?.state === 'working') return agent.model === 'opus' ? POSE.WORK_OPUS : POSE.WORK_SONNET;
+  if (agent?.state === 'waiting') return POSE.WAIT;
+  // Idle agents in the org chart show the off-desk standing portrait
+  // (waving) — that's the cleanest "headshot" pose in the sheet.
+  return POSE.WAVING;
+}
+
 function Sprite({ agent }) {
-  const [err, setErr] = useState(false);
-  if (err) {
-    const letter = (agent.name || '?').charAt(0).toUpperCase();
-    return <div className="org-node-fallback">{letter}</div>;
-  }
-  return (
-    <img
-      src={`/tiles/chars/${agent.name}.png`}
-      style={{ imageRendering: 'pixelated', width: SPRITE_W, height: SPRITE_H }}
-      onError={() => setErr(true)}
-      alt=""
-      draggable={false}
-    />
-  );
+  return <SharedSprite agent={agent} pose={poseForOrg(agent)} size={SPRITE_W} />;
 }
 
 function bubble(state) {

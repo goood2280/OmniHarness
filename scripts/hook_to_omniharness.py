@@ -1,64 +1,62 @@
 """Claude Code hook bridge → OmniHarness Viewer.
 
-Reads a hook event from stdin (JSON), extracts the relevant info,
-and POSTs it to the OmniHarness backend so the pixel-office viewer
+Reads a hook event from stdin (JSON), extracts the relevant info, and
+POSTs it to the OmniHarness backend so the office scene / general tree
 lights up the correct agent and appends an activity log entry.
 
-Usage (from .claude/settings.json on the consumer project):
+Configure the target with `OMNIHARNESS_URL` env var (defaults to
+http://localhost:8082). On any failure the script exits 0 so Claude
+Code is never blocked by viewer downtime.
+
+Usage — add to `.claude/settings.json`:
 
   {
     "hooks": {
-      "PreToolUse": [
-        { "matcher": "Agent", "hooks": [
-          { "type": "command",
-            "command": "python /path/to/OmniHarness/scripts/hook_to_omniharness.py pre" }
-        ]}
-      ],
+      "PreToolUse":  [ { "matcher": "Agent|Task",
+                         "hooks": [{ "type": "command",
+                                     "command": "python /path/OmniHarness/scripts/hook_to_omniharness.py pre" }] } ],
       "PostToolUse": [
-        { "matcher": "Agent", "hooks": [
-          { "type": "command",
-            "command": "python /path/to/OmniHarness/scripts/hook_to_omniharness.py post" }
-        ]},
-        { "matcher": "Edit|Write|Bash", "hooks": [
-          { "type": "command",
-            "command": "python /path/to/OmniHarness/scripts/hook_to_omniharness.py tool" }
-        ]}
+        { "matcher": "Agent|Task",
+          "hooks": [{ "type": "command",
+                      "command": "python /path/OmniHarness/scripts/hook_to_omniharness.py post" }] },
+        { "matcher": "Edit|Write|Bash|Read|Grep|Glob",
+          "hooks": [{ "type": "command",
+                      "command": "python /path/OmniHarness/scripts/hook_to_omniharness.py tool" }] }
       ],
-      "UserPromptSubmit": [
-        { "hooks": [
-          { "type": "command",
-            "command": "python /path/to/OmniHarness/scripts/hook_to_omniharness.py prompt" }
-        ]}
-      ]
+      "UserPromptSubmit": [ { "hooks": [{ "type": "command",
+                                          "command": "python /path/OmniHarness/scripts/hook_to_omniharness.py prompt" }] } ]
     }
   }
-
-The script never raises; on any failure it silently exits 0 so Claude Code
-is never blocked by viewer downtime.
 """
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 
-OMNI = "http://localhost:8081"
+OMNI = os.environ.get("OMNIHARNESS_URL", "http://localhost:8082").rstrip("/")
 
-# Our canonical agent names (must match templates/agents/*.md)
+# Canonical roster — mirrors BASE_ROLES + DEV_CATALOG + DOMAIN_CATALOG in
+# backend/app.py. Keep these in sync when templates change.
 KNOWN_AGENTS = {
+    # Base (always)
     "orchestrator", "dev-lead", "mgmt-lead", "eval-lead",
-    "be-dashboard", "be-filebrowser", "be-tracker",
-    "fe-dashboard", "fe-filebrowser", "fe-tracker",
     "reporter", "hr",
-    "ux-reviewer", "dev-verifier", "user-tester", "admin-tester",
-    "feature-auditor", "industry-researcher",
+    "ux-reviewer", "dev-verifier", "user-role-tester", "admin-role-tester",
+    "security-auditor", "domain-researcher",
+    # Dev catalog
+    "dev-dashboard", "dev-spc", "dev-wafer-map", "dev-ml", "dev-ettime",
+    "dev-tablemap", "dev-tracker", "dev-filebrowser", "dev-admin", "dev-messages",
+    # Domain catalog
+    "process-tagger", "causal-analyst", "dvc-curator", "adapter-engineer",
 }
 
 
 def post(path: str, body: dict) -> None:
     try:
-        data = json.dumps(body).encode("utf-8")
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             OMNI + path, data=data,
             headers={"Content-Type": "application/json"},
@@ -66,7 +64,7 @@ def post(path: str, body: dict) -> None:
         )
         urllib.request.urlopen(req, timeout=1.5).read()
     except (urllib.error.URLError, TimeoutError, Exception):
-        # viewer offline — don't fail the hook
+        # viewer offline — never block the hook
         pass
 
 
@@ -81,20 +79,22 @@ def read_stdin() -> dict:
 
 
 def subagent_from(ev: dict) -> str | None:
-    """Pull the subagent_type from a Task/Agent tool event. Fall back to None."""
+    """Pull a known subagent name out of a Task/Agent event's input."""
+    candidates = []
     tin = ev.get("tool_input") or {}
-    # Claude Code's Agent tool uses `subagent_type`
-    for k in ("subagent_type", "agent", "agentType"):
+    for k in ("subagent_type", "agent", "agentType", "name"):
         v = tin.get(k)
-        if isinstance(v, str) and v in KNOWN_AGENTS:
-            return v
-    # Sometimes it's nested under `tool_use.input`
+        if isinstance(v, str):
+            candidates.append(v)
     tu = ev.get("tool_use") or {}
     ti = tu.get("input") or {}
     for k in ("subagent_type", "agent"):
         v = ti.get(k)
-        if isinstance(v, str) and v in KNOWN_AGENTS:
-            return v
+        if isinstance(v, str):
+            candidates.append(v)
+    for c in candidates:
+        if c in KNOWN_AGENTS:
+            return c
     return None
 
 
@@ -118,7 +118,6 @@ def main(kind: str) -> int:
                                    "detail": "작업 완료 · idle 복귀"})
 
     elif kind == "tool":
-        # A Read/Edit/Write/Bash ran inside the main (or a subagent).
         tname = ev.get("tool_name") or (ev.get("tool_use") or {}).get("name") or "tool"
         tin = ev.get("tool_input") or {}
         fp = tin.get("file_path") or tin.get("command") or tin.get("pattern") or ""

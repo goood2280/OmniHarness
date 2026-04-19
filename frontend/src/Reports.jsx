@@ -117,6 +117,7 @@ export default function Reports({ items, onReload, lang }) {
 
   const current = bodies[selected];
   const rendered = useMemo(() => renderMd(current && current.content_md), [current]);
+  const hasStructured = !!(current && (current.summary || (current.sections || []).length > 0 || Object.keys(current.metrics || {}).length > 0));
 
   if (!items.length) {
     return (
@@ -156,15 +157,66 @@ export default function Reports({ items, onReload, lang }) {
       <div className="report-body">
         {current ? (
           <>
-            <div className="report-head">
+            <div className={`report-head report-sev-${current.severity || 'info'}`}>
               <h3 className="report-big-title">{current.title}</h3>
               <div className="report-head-meta">
                 <span className="chip chip-author">👤 {current.author}</span>
                 <span className="chip">🕒 {relativeTime(current.created, lang)}</span>
                 <span className="chip">{(current.created || '').slice(0, 19).replace('T', ' ')}</span>
+                {(current.tags || []).map((tag) => (
+                  <span key={tag} className="chip chip-tag">#{tag}</span>
+                ))}
               </div>
             </div>
-            <div className="report-md">{rendered}</div>
+
+            {hasStructured ? (
+              <div className="report-structured">
+                {current.summary && (
+                  <div className="report-summary">
+                    <span className="report-summary-label">📌 {lang === 'ko' ? '요약' : 'Summary'}</span>
+                    <p>{current.summary}</p>
+                  </div>
+                )}
+
+                {Object.keys(current.metrics || {}).length > 0 && (
+                  <div className="report-metrics">
+                    {Object.entries(current.metrics).map(([k, v]) => (
+                      <div key={k} className="report-metric">
+                        <span className="report-metric-key">{k}</span>
+                        <span className="report-metric-val">{String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {(current.sections || []).map((sec, i) => (
+                  <section key={i} className="report-section">
+                    <h4 className="report-section-heading">{sec.heading}</h4>
+                    {sec.metric && (
+                      <div className="report-section-metric">{sec.metric}</div>
+                    )}
+                    {sec.body && (
+                      <div className="report-md">{renderMd(sec.body)}</div>
+                    )}
+                    {(sec.bullets || []).length > 0 && (
+                      <ul className="md-ul">
+                        {sec.bullets.map((b, j) => <li key={j}>{b}</li>)}
+                      </ul>
+                    )}
+                  </section>
+                ))}
+
+                {/* Always include the legacy markdown body too, when present */}
+                {current.content_md && (
+                  <details className="report-raw-md">
+                    <summary>{lang === 'ko' ? '원본 마크다운' : 'Raw markdown'}</summary>
+                    <div className="report-md">{rendered}</div>
+                  </details>
+                )}
+              </div>
+            ) : (
+              <div className="report-md">{rendered}</div>
+            )}
           </>
         ) : (
           <div className="empty"><p className="muted">{t('rep.select_hint', lang)}</p></div>

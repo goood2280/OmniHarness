@@ -1,5 +1,15 @@
 import { useState } from 'react';
+import Sprite, { POSE } from './Sprite';
 import { t } from './i18n';
+
+// IDLE (seated at desk) pose works as a clean head-and-shoulders
+// thumbnail for every sheet — Nano Banana sometimes draws the
+// off-desk poses (waving / walking) extending past the panel edge,
+// which crops weirdly when downsized to a 56-px square.
+function poseFor(agent) {
+  if (agent?.state === 'working') return agent.model === 'opus' ? POSE.WORK_OPUS : POSE.WORK_SONNET;
+  return POSE.IDLE;
+}
 
 function stateLabel(state, lang) {
   if (state === 'working') return t('hud.work', lang);
@@ -111,6 +121,16 @@ export default function OrgChart({ topology, org, lang }) {
                 className="org-team-tile"
                 onClick={() => goTeam(team.id)}
               >
+                <div className="org-team-faces">
+                  {members.slice(0, 4).map((m) => (
+                    <div key={m.name} className="org-team-face">
+                      <Sprite agent={m} pose={poseFor(m)} size={72} />
+                    </div>
+                  ))}
+                  {members.length > 4 && (
+                    <div className="org-team-face org-team-face-more">+{members.length - 4}</div>
+                  )}
+                </div>
                 <div className="org-team-name">{teamLabel(team)}</div>
                 <div className="org-team-count">{total}</div>
                 {workingCount > 0 && (
@@ -143,12 +163,9 @@ export default function OrgChart({ topology, org, lang }) {
                   className={`org-member-card state-${st}`}
                   onClick={() => goAgent(agent.name)}
                 >
-                  <img
-                    className="org-member-sprite"
-                    src={`/tiles/chars/${agent.name}.png`}
-                    alt=""
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                  />
+                  <div className="org-member-sprite">
+                    <Sprite agent={agent} pose={poseFor(agent)} size={110} />
+                  </div>
                   <span className="org-member-name">{displayName}</span>
                   <span className={`pill pill-${agent.model}`}>
                     {agent.model}
@@ -167,12 +184,9 @@ export default function OrgChart({ topology, org, lang }) {
       {view === 'agent' && selectedAgent && (
         <div className="org-agent-view">
           <div className="org-agent-head">
-            <img
-              className="org-member-sprite org-member-sprite-lg"
-              src={`/tiles/chars/${selectedAgent.name}.png`}
-              alt=""
-              onError={(e) => { e.currentTarget.style.display = 'none'; }}
-            />
+            <div className="org-member-sprite org-member-sprite-lg">
+              <Sprite agent={selectedAgent} pose={poseFor(selectedAgent)} size={160} />
+            </div>
             <span className="org-member-name">{t(`agent.${selectedAgent.name}`, lang) || selectedAgent.name}</span>
             <span className={`pill pill-${selectedAgent.model}`}>
               {selectedAgent.model}
