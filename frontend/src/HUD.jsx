@@ -12,11 +12,19 @@ export default function HUD({
   lang,
   onLangChange,
   onGuideOpen,
+  onKeysOpen,
   mode = 'custom',
   onModeChange,
   onSwitchProject,
   hasActiveProject,
+  auditStatus,
 }) {
+  const auditDone = auditStatus?.completed_coordinators;
+  const auditEvery = auditStatus?.audit_every;
+  const auditChip =
+    typeof auditDone === 'number' && typeof auditEvery === 'number' && auditEvery > 0
+      ? `${t('audit.hud_chip', lang)} ${auditDone % auditEvery}/${auditEvery}`
+      : null;
   return (
     <div className="hud">
       <div className="hud-left">
@@ -31,6 +39,9 @@ export default function HUD({
             <span>{t('hud.agents', lang)}: {agentCount}</span>
             <span className="state state-working">⚡ {t('hud.work', lang)} {working}</span>
             <span className="state state-idle">💤 {t('hud.wait', lang)} {waiting + idle}</span>
+            {auditChip && (
+              <span className="state state-audit" title={auditChip}>{auditChip}</span>
+            )}
           </>
         )}
       </div>
@@ -50,6 +61,16 @@ export default function HUD({
         <button className="guide-btn" onClick={onGuideOpen} title="Claude Code CLI / Bedrock 설정">
           ☁ {t('guide.button', lang)}
         </button>
+        {onKeysOpen && (
+          <button
+            className="guide-btn keys-btn"
+            onClick={onKeysOpen}
+            title={t('keys.title', lang)}
+            data-testid="hud-keys-btn"
+          >
+            🔑 {t('keys.button', lang)}
+          </button>
+        )}
         <div className="lang-switch" role="group" aria-label={t('hud.lang', lang)}>
           {LANG_OPTIONS.map((opt) => (
             <button

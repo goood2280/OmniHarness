@@ -129,7 +129,18 @@ cp .env.example .env
 ```
 
 - `ANTHROPIC_API_KEY` **또는** `CLAUDE_CODE_USE_BEDROCK=1 + AWS_*` — LLM 팀 제안 + 💬 웹 채팅 orchestrator 에 필요
-- `GEMINI_API_KEY` — 캐릭터 · 아이템 이미지 생성용 (Nano Banana / Gemini 2.5 Flash Image)
+  - 있으면 mgmt-lead 번역에 claude-haiku-4-5 활용; 없으면 heuristic 으로 동작.
+- `OPENAI_API_KEY` — Anthropic/Bedrock 이 없을 때 팀 제안 · 번역 · 감사 보고서에 사용 (기본 `gpt-4o-mini`, `OPENAI_MODEL` 로 override)
+- `GEMINI_API_KEY` — 위 셋이 전부 없을 때 LLM fallback. 또한 캐릭터 · 아이템 이미지 생성용 (Nano Banana / Gemini 2.5 Flash Image). 텍스트 모델은 기본 `gemini-2.5-flash` (`GEMINI_MODEL` override).
+
+> **Provider 우선순위** (먼저 발견되는 것이 선택됨):
+>
+> | 순위 | 환경 변수                       | SDK            |
+> | ---- | ------------------------------- | -------------- |
+> | 1    | `ANTHROPIC_API_KEY`             | `anthropic`    |
+> | 2    | `CLAUDE_CODE_USE_BEDROCK=1`     | `boto3`        |
+> | 3    | `OPENAI_API_KEY`                | `openai`       |
+> | 4    | `GEMINI_API_KEY`                | `google-genai` |
 - `OMNIHARNESS_URL` — CLI 훅이 POST 할 주소 (기본 `http://localhost:8082`)
 - `OMNI_AUTO_COORDINATE=1` — `POST /api/requirements` 시 자동으로 코디네이터 태움 ([자세히](#-코디네이터--모드))
 
@@ -349,7 +360,17 @@ cp .env.example .env
 ```
 
 - `ANTHROPIC_API_KEY` **or** `CLAUDE_CODE_USE_BEDROCK=1 + AWS_*` — required for LLM team proposal + the 💬 web-chat orchestrator
-- `GEMINI_API_KEY` — for character / item art (Nano Banana / Gemini 2.5 Flash Image)
+- `OPENAI_API_KEY` — fallback for team proposal / translation / audit reports when no Anthropic/Bedrock key is set (default `gpt-4o-mini`, override via `OPENAI_MODEL`)
+- `GEMINI_API_KEY` — last-resort LLM fallback; also character / item art (Nano Banana / Gemini 2.5 Flash Image). Text model defaults to `gemini-2.5-flash` (`GEMINI_MODEL` override).
+
+> **Provider priority** (first match wins):
+>
+> | Rank | Env var                         | SDK            |
+> | ---- | ------------------------------- | -------------- |
+> | 1    | `ANTHROPIC_API_KEY`             | `anthropic`    |
+> | 2    | `CLAUDE_CODE_USE_BEDROCK=1`     | `boto3`        |
+> | 3    | `OPENAI_API_KEY`                | `openai`       |
+> | 4    | `GEMINI_API_KEY`                | `google-genai` |
 - `OMNIHARNESS_URL` — where the CLI hook POSTs (default `http://localhost:8082`)
 
 ---
@@ -459,6 +480,24 @@ Not affiliated with Anthropic.
 ## 📅 Updates / 업데이트
 
 Reverse chronological. Each entry is a short "why" — the commit log has the "how".
+
+### `v1.3` — 2026-04-19 — **Multi-provider · mgmt-lead translation · Audit reports · Viewer honesty**
+- 🔀 **Multi-provider LLM routing** (`backend/translator.py` + `backend/app.py`). Unified `_llm_call()` with priority `ANTHROPIC_API_KEY > CLAUDE_CODE_USE_BEDROCK > OPENAI_API_KEY > GEMINI_API_KEY > heuristic`. SDKs are imported lazily so backends without a given SDK still boot. README `.env` table updated with the 4 slots.
+- 🔑 **In-UI provider key entry** (`frontend/src/ProviderKeysPanel.jsx` + new `GET/POST /api/providers/keys`). Paste a key into the HUD `🔑 KEYS` panel and it's mirrored into `os.environ` + persisted to `_state/state.json`, so `translator._llm_call` picks it up without a shell restart. Values coming from the shell are flagged `env_locked` and can't be cleared from the UI.
+- 💬 **mgmt-lead real translation** (`backend/translator.py::simplify`). Replaces the passthrough that made "경영지원 리드가 번역중" stick forever. LLM path uses `claude-haiku-4-5-20251001` (or whichever provider wins); heuristic path reshapes raw questions into `질문 / 맥락 / 선택지 (A)(B)(C)` bullets. `OMNI_TRANSLATE_PASSTHROUGH=0` disables it; default is on.
+- 🔢 **Short Q-IDs** (`Q001`, `Q002` …). Every question gets a human-friendly id next to its hash id. New convenience endpoints `POST /api/questions/by-short/{Qnnn}/answer` and `…/translate`. Backfilled on boot for any pre-existing questions without a short id. Chat users can now say "Q003 답: …" and the main session bridges it.
+- 📝 **Audit reports** (`backend/audit.py::build_audit_report` + `_publish_audit_report`). Every `run_audit_pass` / `run_big_security_pass` now also posts a user-friendly markdown report into `REPORTS` (`핵심 요약 / 발견된 패턴 / 권고 조치 / 주의 플래그`). LLM path available; heuristic path maps `split_agent` / `retire_agent` / `parallelize` / `security_pass` to plain-language sentences.
+- 🛡️ **Big-picture security pass** (`run_big_security_pass` + `POST /api/audit/security/run` + `SECURITY_AUDIT_EVERY`, default 10). Scans recent tool events for sensitive paths (`backend/routers/**`, `core/**`, env/config files) and emits proposals tagged `source="security-big-picture"`, independent of the per-change `security-auditor` already on the review wave.
+- 🔎 **Audit cadence reduced to every 15** coordinator completions (`OMNI_AUDIT_EVERY=15`, was 5). Less noise, manual `POST /api/audit/run` button still available in the viewer's Evolution tab.
+- ♻️ **Dedup guards** for audit + reports. Same `(kind, target, source)` evolution proposal with `status=proposed` is updated in place; decided-within-24h is skipped. Reports dedup by `title + source + proposal_ids` in a 1-hour window.
+- 🗑️ **`DELETE /api/evolution/{eid}` + `DELETE /api/reports/{rid}`** — finally possible to prune stale cards from the viewer.
+- 👥 **Review wave expansion** — in addition to `eval-lead` · `reporter` · `dev-verifier` · `security-auditor`, the review `group` now includes `user-role-tester` + `admin-role-tester` so every change gets a user + admin sanity check.
+- ⚡ **Coordinator compression** (accepted audit proposal `c28443b1`). The two-step orchestrator preamble (4.5 s) collapses into a single `start(1 s)` router step, and dev waves + review waves share a single group id so they fire simultaneously — roughly 50% faster timelines on UI/API/Domain branches.
+- 👁️ **SceneTodo filter fix**. Left-dock `예정` was leaking `cancelled` items (filter was `!== 'done'`); now `next/planning` only. `완료` was reading from empty `reports` only; now it shows `backlog.status === 'done'` merged with `reports`.
+- 🎫 **Questions tab badge** — dropped the confusing `+N` count (was summing `pending_answer_translation` forever). Now only a **red square** for `pending_user > 0`, box-shadowed to stand out.
+- 💰 **Cost chips extended** — `PRICING` / `COST_BY_MODEL` / `TOKENS_BY_MODEL` now track `gpt-4o` · `gpt-4o-mini` · `gemini-2.5-pro` · `gemini-2.5-flash` in addition to the three Claude tiers, so HUD chips appear for whichever provider the user actually calls.
+- ✂️ **UI trims** — `MissionBanner` edit pen (✎) removed, floating `✚ 요구사항 제출` HUD card removed (Requirements tab already covers submission), `OfficeScene` marquee-zoom capture no longer swallows SceneTodo clicks.
+- 💡 **Viewer honesty rule** (user guidance 2026-04-19): `auto_coordinate` is off by default — requirement timelines only play if the user explicitly asks for demo mode. Real hooks from real tool calls drive the office-scene lighting, so `working` agents reflect what's actually running, not a scripted animation.
 
 ### `v1.2` — 2026-04-19 — **Active coordinator · Persistence · Backlog pipeline · Salary panel**
 - 🎼 **Active coordinator engine** (`backend/coordinator.py`) — `POST /api/requirements` now auto-plays the whole `orchestrator → dev-lead → dev-* → (ux-reviewer) → eval-lead → reporter → orchestrator done` timeline so the office scene lights up even without an external driver. LLM-free, provider-agnostic. See the **🎼 Coordinator & Modes** section below. Enable with `OMNI_AUTO_COORDINATE=1` or per-request `"auto_coordinate": true`.

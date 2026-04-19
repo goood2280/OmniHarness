@@ -50,7 +50,6 @@ export default function TabPanel({
         <TabBtn
           active={tab === 'questions'} onClick={() => setTab('questions')} icon="❓" label={t('tab.questions', lang)}
           badge={pendingUser > 0 ? pendingUser : null}
-          count={pendingTrans > 0 ? `+${pendingTrans}` : null}
         />
         <TabBtn
           active={tab === 'requirements'} onClick={() => setTab('requirements')} icon="🎯" label={t('tab.requirements', lang)}

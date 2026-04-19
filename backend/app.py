@@ -95,6 +95,13 @@ from pydantic import BaseModel
 # only for the start/stop/list endpoints below — the module itself
 # does a late `import app` to read/write our in-memory tables.
 import coordinator as _coordinator
+# Periodic audit pass (감사). Fires every OMNI_AUDIT_EVERY coordinator
+# completions, or on-demand via /api/audit/run. Late-imports app.* the
+# same way coordinator.py does.
+import audit as _audit
+# mgmt-lead translator — raw 질문을 도메인 전문가 친화적으로 풀어쓴다.
+# ANTHROPIC_API_KEY 있으면 claude-haiku-4-5 호출, 없으면 heuristic.
+import translator as _translator
 
 ROOT = Path(__file__).parent.parent
 TEMPLATES = ROOT / "templates" / "agents"
@@ -155,29 +162,137 @@ State = Literal["idle", "working", "waiting"]
 
 # ── Pricing (approximate 2026 rates, USD per 1M tokens) ──────────────
 PRICING = {
-    "opus":   {"in": 15.0,  "out": 75.0},
-    "sonnet": {"in": 3.0,   "out": 15.0},
-    "haiku":  {"in": 1.0,   "out": 5.0},
+    # Anthropic Claude 4.x
+    "opus":     {"in": 15.0,  "out": 75.0},
+    "sonnet":   {"in": 3.0,   "out": 15.0},
+    "haiku":    {"in": 1.0,   "out": 5.0},
+    # OpenAI (대표 모델 2종; OpenAI 요금은 실시간 변동 — 대략치)
+    "gpt-4o":      {"in": 2.5,  "out": 10.0},
+    "gpt-4o-mini": {"in": 0.15, "out": 0.6},
+    # Google Gemini
+    "gemini-2.5-pro":   {"in": 1.25, "out": 10.0},
+    "gemini-2.5-flash": {"in": 0.3,  "out": 2.5},
 }
 
 # ── In-memory state ──────────────────────────────────────────────────
 STATES: dict[str, State] = {}
 COST_TOTAL: float = 0.0
-COST_BY_MODEL: dict[str, float] = {"opus": 0.0, "sonnet": 0.0, "haiku": 0.0}
+COST_BY_MODEL: dict[str, float] = {k: 0.0 for k in PRICING.keys()}
 COST_BY_AGENT: dict[str, dict] = {}
-TOKENS_BY_MODEL: dict[str, dict] = {
-    "opus":   {"in": 0, "out": 0},
-    "sonnet": {"in": 0, "out": 0},
-    "haiku":  {"in": 0, "out": 0},
-}
+TOKENS_BY_MODEL: dict[str, dict] = {k: {"in": 0, "out": 0} for k in PRICING.keys()}
 
 ACTIVITY: deque = deque(maxlen=300)
+
+# Provider API keys — user-supplied via UI. Persisted to _state/state.json.
+# On load we also inject into os.environ so the rest of the codebase
+# (translator._llm_call, coordinator stubs, _detect_provider) keeps
+# working unchanged. Empty / missing → deleted from the dict and env.
+#   anthropic | openai | gemini → API_KEY string
+#   bedrock                    → "1" if CLAUDE_CODE_USE_BEDROCK is on
+PROVIDER_KEYS: dict[str, str] = {}
+
+# Maps the UI key slot → actual os.environ name we mirror into.
+_PROVIDER_ENV_MAP: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai":    "OPENAI_API_KEY",
+    "gemini":    "GEMINI_API_KEY",
+    "bedrock":   "CLAUDE_CODE_USE_BEDROCK",
+}
+
+
+def _apply_provider_keys_to_env() -> None:
+    """Mirror PROVIDER_KEYS into os.environ. Called on load and after
+    every POST so translator / chat code paths see the latest value
+    without restart."""
+    for slot, envname in _PROVIDER_ENV_MAP.items():
+        val = PROVIDER_KEYS.get(slot)
+        if val:
+            os.environ[envname] = val
+        # If the user cleared the UI slot we do NOT pop os.environ[envname]
+        # — a .env / shell export may legitimately still own that slot.
+        # POST handler removes it explicitly when asked.
+
+
+def _mask_key(val: str) -> str:
+    """Return 'sk-…abcd' style mask for display. None/empty stays None."""
+    if not val:
+        return ""
+    s = str(val)
+    if len(s) <= 6:
+        return "…" + s[-2:]
+    return s[:3] + "…" + s[-4:]
+
 
 QUESTIONS: list[dict] = []
 REPORTS: list[dict] = []
 REQUIREMENTS: list[dict] = []
 BACKLOG: list[dict] = []
 EVOLUTION: list[dict] = []
+
+# 감사(audit) 루프 카운터 — coordinator 런 완료마다 +1, OMNI_AUDIT_EVERY
+# 회마다 audit.run_audit_pass_async() 를 비동기로 돌린다.
+COORDINATOR_COMPLETED: int = 0
+
+
+def _next_short_q_id() -> str:
+    """Return next ``Q###`` short id, scanning QUESTIONS for the highest
+    existing numeric suffix. Monotonic: even after deletions we never
+    reuse a prior number within a single process lifetime's view of the
+    current list (ids live in-list so re-scan is correct on boot too)."""
+    hi = 0
+    for q in QUESTIONS:
+        sid = (q or {}).get("short_id") or ""
+        if isinstance(sid, str) and sid.startswith("Q") and sid[1:].isdigit():
+            try:
+                n = int(sid[1:])
+                if n > hi:
+                    hi = n
+            except ValueError:
+                pass
+    return f"Q{hi + 1:03d}"
+
+
+def _backfill_short_q_ids() -> None:
+    """On boot, assign ``Q001``, ``Q002`` … to any QUESTIONS entry that
+    is missing ``short_id``. Preserves existing short_ids so any value a
+    user already memorised (e.g. ``Q042``) stays stable across restarts.
+    We iterate oldest-first (QUESTIONS is newest-first; reversed())."""
+    used = set()
+    for q in QUESTIONS:
+        sid = (q or {}).get("short_id")
+        if isinstance(sid, str) and sid:
+            used.add(sid)
+    counter = 1
+    for q in reversed(QUESTIONS):
+        if q.get("short_id"):
+            continue
+        while f"Q{counter:03d}" in used:
+            counter += 1
+        sid = f"Q{counter:03d}"
+        q["short_id"] = sid
+        used.add(sid)
+        counter += 1
+
+
+def _backfill_translate_passthrough() -> None:
+    """Passthrough 모드에서 부팅 시점에 ``pending_translation`` 상태로
+    고여있는 질문들을 즉시 ``pending_user`` 로 승격해 사용자가 볼 수
+    있게 한다. translator.simplify() 로 raw 를 풀어써서 translated 에
+    넣는다 — ANTHROPIC_API_KEY 있으면 LLM, 없으면 heuristic. 실패하면
+    raw 를 그대로 복사해 최소한 화면에는 뭔가 뜨게 한다.
+    OMNI_TRANSLATE_PASSTHROUGH=0 이면 비활성."""
+    passthrough = os.environ.get("OMNI_TRANSLATE_PASSTHROUGH", "1") in ("1", "true", "True")
+    if not passthrough:
+        return
+    for q in QUESTIONS:
+        if q.get("status") == "pending_translation":
+            if not q.get("translated"):
+                raw = q.get("raw", "")
+                try:
+                    q["translated"] = _translator.simplify(raw, {"agent": q.get("agent")})
+                except Exception:
+                    q["translated"] = raw
+            q["status"] = "pending_user"
 
 # ── 영속화 경로 ─────────────────────────────────────────────────────
 # 서버 재기동에도 살아남아야 할 상태는 여기에 json dump.
@@ -205,6 +320,7 @@ def _save_state() -> None:
             "cost_by_model": COST_BY_MODEL,
             "cost_by_agent": COST_BY_AGENT,
             "tokens_by_model": TOKENS_BY_MODEL,
+            "provider_keys": PROVIDER_KEYS,
         }
         _STATE_PATH.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -237,6 +353,17 @@ def _load_state() -> None:
     for k, v in (data.get("tokens_by_model") or {}).items():
         if k in TOKENS_BY_MODEL and isinstance(v, dict):
             TOKENS_BY_MODEL[k].update(v)
+    # Provider keys persisted from UI — re-inject into os.environ so the
+    # translator and chat paths see them on cold boot, same as if the
+    # user had exported them in their shell.
+    PROVIDER_KEYS.clear()
+    for k, v in (data.get("provider_keys") or {}).items():
+        if isinstance(v, str) and v and k in _PROVIDER_ENV_MAP:
+            PROVIDER_KEYS[k] = v
+    _apply_provider_keys_to_env()
+    # Migrate: any pre-existing QUESTIONS without short_id get one now.
+    _backfill_short_q_ids()
+    _backfill_translate_passthrough()
 
 
 _load_state()
@@ -794,21 +921,86 @@ def create_question(q: QuestionIn):
     if q.agent not in roster:
         raise HTTPException(404, f"unknown agent: {q.agent}")
     qid = str(uuid.uuid4())[:8]
+    short = _next_short_q_id()
+    # OMNI_TRANSLATE_PASSTHROUGH=1 (default): mgmt-lead 가 실제로
+    # translator.simplify() 를 돌려서 raw 를 도메인 전문가 친화적으로
+    # 풀어쓴 뒤 translated 에 넣고 pending_user 로 승격. 실패하면 raw
+    # 를 그대로 넣고 activity 에 '번역 실패 — raw 사용' 을 남긴다.
+    # OMNI_TRANSLATE_PASSTHROUGH=0 이면 2-hop 플로우 (외부 mgmt-lead
+    # 프로세스가 /translate 를 직접 호출) 로 되돌린다.
+    passthrough = os.environ.get("OMNI_TRANSLATE_PASSTHROUGH", "1") in ("1", "true", "True")
+    translated: str | None = None
+    translate_failed = False
+    if passthrough:
+        try:
+            translated = _translator.simplify(q.raw, {"agent": q.agent})
+            if not translated:
+                translated = q.raw
+        except Exception:
+            translated = q.raw
+            translate_failed = True
+        status = "pending_user"
+    else:
+        status = "pending_translation"
     item = {
         "id": qid,
+        "short_id": short,
         "agent": q.agent,
         "raw": q.raw,
-        "translated": None,
+        "translated": translated,
         "answer": None,
         "answer_structured": None,
         "context": q.context,
-        "status": "pending_translation",
+        "status": status,
         "created": now_iso(),
         "answered": None,
     }
     QUESTIONS.insert(0, item)
-    log_event(q.agent, "question", "질문 제기: " + q.raw[:48])
+    log_event(q.agent, "question", f"질문 제기({short}): " + q.raw[:48])
+    if passthrough:
+        if translate_failed:
+            log_event(
+                "mgmt-lead",
+                "question",
+                f"mgmt-lead 번역 실패 — raw 사용({short})",
+            )
+        else:
+            log_event(
+                "mgmt-lead",
+                "question",
+                f"mgmt-lead 번역 완료({short}): " + (translated or "")[:48],
+            )
+    _save_state()
     return item
+
+
+def _lookup_qid_by_short(short_id: str) -> str:
+    """Resolve a short id (``Q003``) to the internal hash ``id``. 404s
+    if no match — matches the shape other question endpoints return."""
+    for q in QUESTIONS:
+        if q.get("short_id") == short_id:
+            return q["id"]
+    raise HTTPException(404, f"no question with short_id {short_id}")
+
+
+class QuestionAnswerByShort(BaseModel):
+    """Convenience body for ``/by-short/{sid}/answer``. Accepts ``text``
+    per the public spec; internally we hand it to the existing answer
+    endpoint which expects ``answer``."""
+
+    text: str
+
+
+@app.post("/api/questions/by-short/{short_id}/answer")
+def answer_question_by_short(short_id: str, body: QuestionAnswerByShort):
+    qid = _lookup_qid_by_short(short_id)
+    return answer_question(qid, QuestionAnswer(answer=body.text))
+
+
+@app.post("/api/questions/by-short/{short_id}/translate")
+def translate_question_by_short(short_id: str, body: QuestionTranslate):
+    qid = _lookup_qid_by_short(short_id)
+    return translate_question(qid, body)
 
 
 @app.post("/api/questions/{qid}/translate")
@@ -861,6 +1053,23 @@ def get_report(rid: str):
     for r in REPORTS:
         if r["id"] == rid:
             return r
+    raise HTTPException(404, "report not found")
+
+
+@app.delete("/api/reports/{rid}")
+def delete_report(rid: str):
+    """Remove a report from REPORTS. Used by the audit-dedup cleanup
+    flow when two runs produced near-identical digests and the user
+    wants the older one gone. Kept simple: no admin guard (viewer is
+    localhost-only) and no soft-delete — the record is dropped and the
+    state file rewritten so the next boot agrees with the live viewer.
+    """
+    for i, r in enumerate(REPORTS):
+        if r.get("id") == rid:
+            removed = REPORTS.pop(i)
+            log_event("user", "report", f"보고서 삭제: {removed.get('title', rid)}")
+            _save_state()
+            return {"ok": True, "id": rid, "title": removed.get("title")}
     raise HTTPException(404, "report not found")
 
 
@@ -986,7 +1195,7 @@ def propose_team():
     # invent project-specific agent names.
     provider = _detect_provider()
     llm_result = None
-    if provider in ("anthropic", "bedrock"):
+    if provider in ("anthropic", "bedrock", "openai", "gemini"):
         try:
             llm_result = _propose_team_via_llm(mission, provider)
         except Exception as e:
@@ -1102,7 +1311,14 @@ def _propose_team_via_llm(mission: dict, provider: str):
 
 
 def _llm_oneshot(system: str, user: str, provider: str) -> str:
-    """Single-turn call to Anthropic or Bedrock. Returns the text body."""
+    """Single-turn call. Tries ``provider`` first, then walks through the
+    rest via ``translator._llm_call`` so multi-provider fallback is unified.
+
+    Team-proposal needs ~2000 tokens and a stronger model than translator,
+    so we handle Anthropic/Bedrock inline (with ANTHROPIC_MODEL overrides).
+    For OpenAI/Gemini we delegate to ``translator._llm_call``, which walks
+    the same provider priority and handles optional imports cleanly.
+    """
     if provider == "anthropic":
         from anthropic import Anthropic
         client = Anthropic()
@@ -1132,6 +1348,16 @@ def _llm_oneshot(system: str, user: str, provider: str) -> str:
         out = resp.get("output", {}).get("message", {})
         parts = [c.get("text", "") for c in out.get("content", []) if c.get("text")]
         return "\n".join(parts)
+    if provider in ("openai", "gemini"):
+        # Delegate to the unified translator dispatch — it walks providers
+        # in priority order and handles optional imports. Anthropic/Bedrock
+        # are already filtered out above, so this reliably lands on the
+        # openai/gemini branch when those keys are the only ones present.
+        from translator import _llm_call as _t_llm_call  # type: ignore
+        out = _t_llm_call(system, user)
+        if out:
+            return out
+        raise RuntimeError(f"LLM provider '{provider}' produced no output")
     raise RuntimeError(f"no LLM provider available ({provider})")
 
 
@@ -1367,6 +1593,103 @@ def coordinate_list():
     return {"running": _coordinator.list_coordinators()}
 
 
+# ── Coordinator completion hook + periodic audit trigger ────────────
+def on_coordinator_complete(rid: str) -> None:
+    """Called from coordinator.run_coordinator when a run reaches
+    status=done (success path — cancel/failure paths skip this).
+
+    Bumps COORDINATOR_COMPLETED and, every ``OMNI_AUDIT_EVERY`` runs,
+    schedules an async audit pass on the main loop.
+    """
+    global COORDINATOR_COMPLETED
+    COORDINATOR_COMPLETED += 1
+    try:
+        every = max(1, int(os.environ.get("OMNI_AUDIT_EVERY", "15")))
+    except Exception:
+        every = 5
+    try:
+        big_every = max(1, int(os.environ.get("SECURITY_AUDIT_EVERY", "10")))
+    except Exception:
+        big_every = 10
+
+    audit_due = (COORDINATOR_COMPLETED % every == 0)
+    big_sec_due = (COORDINATOR_COMPLETED % big_every == 0)
+    if not audit_due and not big_sec_due:
+        return
+
+    # Schedule async on the main loop; swallow errors so the coordinator
+    # doesn't crash on audit-side bugs. The two passes are independent —
+    # big-picture security is a separate track from the general audit.
+    loop = getattr(_coordinator, "_MAIN_LOOP", None)
+    try:
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+
+        def _schedule(coro_factory, sync_fallback) -> None:
+            if loop is None:
+                sync_fallback()
+                return
+            if running is loop:
+                loop.create_task(coro_factory())
+            else:
+                asyncio.run_coroutine_threadsafe(coro_factory(), loop)
+
+        if audit_due:
+            _schedule(_audit.run_audit_pass_async, _audit.run_audit_pass)
+        if big_sec_due:
+            _schedule(
+                _audit.run_big_security_pass_async,
+                _audit.run_big_security_pass,
+            )
+    except Exception as e:
+        log_event("hr", "audit", f"감사 스케줄링 실패: {e}")
+
+
+# ── Audit endpoints (수동 트리거 + 상태 조회) ──────────────────────
+@app.post("/api/audit/run")
+def api_audit_run():
+    """Manually trigger an audit pass synchronously. Returns the list of
+    newly-created EVOLUTION proposal ids."""
+    try:
+        created = _audit.run_audit_pass()
+    except Exception as e:
+        raise HTTPException(500, f"audit failed: {e}")
+    return {
+        "created_ids": [c["id"] for c in created],
+        "count": len(created),
+        "items": created,
+    }
+
+
+@app.get("/api/audit/status")
+def api_audit_status():
+    return _audit.status()
+
+
+@app.post("/api/audit/security/run")
+def api_audit_security_run():
+    """Manually trigger a big-picture security pass synchronously.
+    Returns the newly-created EVOLUTION proposal ids tagged
+    ``source='security-big-picture'``.
+    """
+    try:
+        created = _audit.run_big_security_pass()
+    except Exception as e:
+        raise HTTPException(500, f"big-picture security pass failed: {e}")
+    return {
+        "created_ids": [c["id"] for c in created],
+        "count": len(created),
+        "items": created,
+    }
+
+
 @app.post("/api/requirements/{rid}/status")
 def set_requirement_status(rid: str, body: RequirementStatus):
     # requirement → backlog 상태 매핑
@@ -1410,10 +1733,19 @@ def cancel_requirement(rid: str):
                 "requirement",
                 f"요구사항 취소됨 ({prev} → cancelled)",
             )
-            # backlog 연동
+            # backlog 연동: cancelled 전파 + 실제로 상태가 바뀐 개수를
+            # activity 로 1줄 남긴다 (이미 cancelled 였으면 skip).
+            flipped = 0
             for b in BACKLOG:
-                if b.get("source_req_id") == rid:
+                if b.get("source_req_id") == rid and b.get("status") != "cancelled":
                     b["status"] = "cancelled"
+                    flipped += 1
+            if flipped:
+                log_event(
+                    item.get("assigned_to") or "orchestrator",
+                    "backlog",
+                    f"요구사항 취소에 따라 백로그 {flipped}건 cancelled 로 전환",
+                )
             # Stop any running coordinator for this rid as well.
             try:
                 _coordinator.stop_coordinator(rid)
@@ -1426,8 +1758,15 @@ def cancel_requirement(rid: str):
 
 # ── Backlog (populated only by real Claude Code work) ───────────────
 @app.get("/api/backlog")
-def get_backlog():
-    return {"items": list(BACKLOG)}
+def get_backlog(exclude_cancelled: int = 0):
+    """Return all backlog items. With ``?exclude_cancelled=1`` filter out
+    any items whose source requirement was cancelled — lets the frontend
+    keep a "live" next/working view without showing tombstones. Default
+    stays on (include-all) for back-compat with existing callers."""
+    items = list(BACKLOG)
+    if exclude_cancelled:
+        items = [b for b in items if (b.get("status") or "") != "cancelled"]
+    return {"items": items}
 
 
 @app.post("/api/backlog")
@@ -1590,6 +1929,77 @@ def get_providers():
     return {"providers": PROVIDERS}
 
 
+class ProviderKeysIn(BaseModel):
+    anthropic: str | None = None
+    openai:    str | None = None
+    gemini:    str | None = None
+    bedrock:   bool | str | None = None
+
+
+@app.get("/api/providers/keys")
+def get_provider_keys():
+    """Return masked view of configured keys. For anthropic/openai/gemini
+    the response is ``"sk-…abcd"`` when set (from UI OR env) else null.
+    ``bedrock`` is a bool — CLAUDE_CODE_USE_BEDROCK=="1"."""
+    def _resolved(slot: str) -> str:
+        # UI-saved value wins; else whatever env already has (e.g. .env).
+        envname = _PROVIDER_ENV_MAP[slot]
+        return PROVIDER_KEYS.get(slot) or os.environ.get(envname) or ""
+
+    return {
+        "anthropic": _mask_key(_resolved("anthropic")) or None,
+        "openai":    _mask_key(_resolved("openai"))    or None,
+        "gemini":    _mask_key(_resolved("gemini"))    or None,
+        "bedrock":   _resolved("bedrock") == "1",
+        # Hint for the UI: which slots are locked by env (user cannot
+        # clear them from UI — they'd need to unset the shell export).
+        "env_locked": {
+            slot: bool(os.environ.get(_PROVIDER_ENV_MAP[slot]))
+                  and not PROVIDER_KEYS.get(slot)
+            for slot in _PROVIDER_ENV_MAP
+        },
+    }
+
+
+@app.post("/api/providers/keys")
+def set_provider_keys(body: ProviderKeysIn):
+    """Upsert/remove provider keys.
+
+    Semantics per slot:
+      • value is a non-empty string → save + inject os.environ[envname]
+      • value is ``""`` or ``null`` → drop from PROVIDER_KEYS AND pop
+        os.environ[envname]. (User explicitly cleared; env mirror goes
+        with it so next LLM call falls back to the next provider.)
+    For ``bedrock``, accept bool OR "1"/"0" strings — stored as "1"/"".
+    """
+    payload = body.model_dump(exclude_unset=True)
+    touched: list[str] = []
+
+    for slot, envname in _PROVIDER_ENV_MAP.items():
+        if slot not in payload:
+            continue
+        raw = payload[slot]
+        if slot == "bedrock":
+            if raw in (True, "1", 1, "true", "True"):
+                PROVIDER_KEYS[slot] = "1"
+                os.environ[envname] = "1"
+            else:
+                PROVIDER_KEYS.pop(slot, None)
+                os.environ.pop(envname, None)
+        else:
+            s = (raw or "").strip() if isinstance(raw, str) else ""
+            if s:
+                PROVIDER_KEYS[slot] = s
+                os.environ[envname] = s
+            else:
+                PROVIDER_KEYS.pop(slot, None)
+                os.environ.pop(envname, None)
+        touched.append(slot)
+
+    _save_state()
+    return {"ok": True, "touched": touched, **get_provider_keys()}
+
+
 # ── Knowledge base (self-evolution, scoped to active project) ───────
 def _knowledge_file() -> Path:
     slug = get_active_project()
@@ -1656,6 +2066,25 @@ def propose_evolution(e: EvolutionIn):
     EVOLUTION.insert(0, item)
     log_event(e.agent, "evolution", f"자가진화 제안 [{e.kind}]: {e.title}")
     return item
+
+
+@app.delete("/api/evolution/{eid}")
+def delete_evolution(eid: str):
+    """Remove an EVOLUTION proposal. Used by the audit-dedup cleanup
+    flow to prune leftover duplicate cards (e.g. a rejected finding
+    that was also accepted in parallel). No admin guard — the viewer
+    runs on localhost.
+    """
+    for i, item in enumerate(EVOLUTION):
+        if item.get("id") == eid:
+            removed = EVOLUTION.pop(i)
+            log_event(
+                "user", "evolution",
+                f"감사 제안 삭제({eid}): {removed.get('title', '')}"
+            )
+            _save_state()
+            return {"ok": True, "id": eid, "title": removed.get("title")}
+    raise HTTPException(404, "evolution proposal not found")
 
 
 @app.post("/api/evolution/{eid}/decision")
@@ -1745,11 +2174,17 @@ class ChatIn(BaseModel):
 
 
 def _detect_provider() -> str:
-    """Pick the strongest provider available."""
-    if os.environ.get("CLAUDE_CODE_USE_BEDROCK") == "1" or os.environ.get("AWS_ACCESS_KEY_ID"):
-        return "bedrock"
+    """Pick the strongest provider available. Priority matches
+    ``translator._llm_call``: anthropic > bedrock > openai > gemini > stub.
+    """
     if os.environ.get("ANTHROPIC_API_KEY"):
         return "anthropic"
+    if os.environ.get("CLAUDE_CODE_USE_BEDROCK") == "1" or os.environ.get("AWS_ACCESS_KEY_ID"):
+        return "bedrock"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    if os.environ.get("GEMINI_API_KEY"):
+        return "gemini"
     return "stub"
 
 
@@ -1842,6 +2277,18 @@ def api_chat(body: ChatIn):
             reply = _call_bedrock(body.message, body.history or [])
         elif provider == "anthropic":
             reply = _call_anthropic(body.message, body.history or [])
+        elif provider in ("openai", "gemini"):
+            # Flatten history into the user turn; translator._llm_call is
+            # single-turn (system + user). Good enough for chat fallback —
+            # if users want full multi-turn they can wire ANTHROPIC_API_KEY.
+            from translator import _llm_call as _t_llm_call  # type: ignore
+            hist_text = "\n".join(
+                f"{m.get('role','user')}: {m.get('content','')}"
+                for m in (body.history or [])
+            )
+            user_blob = (hist_text + "\n\n" + body.message).strip() if hist_text else body.message
+            reply = _t_llm_call(_orchestrator_system_prompt(), user_blob) \
+                or _call_stub(body.message, body.history or [])
         else:
             reply = _call_stub(body.message, body.history or [])
     except Exception as e:

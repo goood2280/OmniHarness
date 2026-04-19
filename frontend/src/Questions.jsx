@@ -12,17 +12,19 @@ import { useState } from 'react';
 import { t } from './i18n';
 
 export default function Questions({ items, onReload, lang }) {
-  const active = items.filter((q) => q.status !== 'answered');
+  const active = (items || []).filter((q) => q.status !== 'answered');
   if (!active.length) {
     return (
       <div className="empty">
         <p>{t('q.empty_title', lang)}</p>
         <p className="muted">{t('q.empty_body', lang)}</p>
+        <p className="muted q-empty-chat-hint">{t('q.empty_chat_hint', lang)}</p>
       </div>
     );
   }
   return (
     <div className="questions">
+      <div className="q-chat-tip">{t('q.chat_tip', lang)}</div>
       {active.map((q) => (
         <QuestionCard key={q.id} q={q} onReload={onReload} lang={lang} />
       ))}
@@ -59,9 +61,15 @@ function QuestionCard({ q, onReload, lang }) {
     }
   };
 
+  const shortId = q.short_id || '';
+  const placeholder = shortId
+    ? t('q.answer_ph_with_id', lang).replace('{sid}', shortId)
+    : t('q.answer_ph', lang);
+
   return (
     <div className={`q-card q-${q.status}`}>
       <div className="q-head">
+        {shortId && <span className="q-short-id" title="short id">{shortId}</span>}
         <span className="q-agent">{q.agent}</span>
         <span className="q-status">{statusLabel}</span>
         <span className="q-time">{(q.created || '').slice(11, 19)}</span>
@@ -85,7 +93,7 @@ function QuestionCard({ q, onReload, lang }) {
       {q.status === 'pending_user' && (
         <div className="q-answer-form">
           <textarea
-            placeholder={t('q.answer_ph', lang)}
+            placeholder={placeholder}
             value={answer}
             onChange={(e) => setAnswer(e.target.value)}
           />

@@ -286,6 +286,27 @@ button { font-family: inherit; cursor: pointer; }
 .q-answered { opacity: 0.7; }
 .q-head { display: flex; gap: 10px; align-items: center; font-size: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .q-agent { background: #ffd54f; color: #3b2a00; padding: 3px 8px; font-weight: 600; font-family: 'Press Start 2P', monospace; font-size: 9px; }
+.q-short-id {
+  display: inline-block;
+  background: #ff8c1a; color: #200e00;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  box-shadow: 0 0 0 2px #3b2000 inset;
+}
+.q-chat-tip {
+  background: #1a1405; border-left: 3px solid #ff8c1a;
+  color: #ffd9b0; font-family: 'Pretendard', sans-serif;
+  font-size: 12px; padding: 8px 12px; line-height: 1.5;
+  margin-bottom: 4px;
+}
+.q-empty-chat-hint {
+  margin-top: 10px; font-size: 12px; color: #ff8c1a;
+  font-family: 'Pretendard', sans-serif; line-height: 1.55;
+}
 .q-status { color: #ccc; font-family: 'Pretendard', sans-serif; font-size: 12px; }
 .q-time { color: #777; margin-left: auto; font-size: 10px; }
 .q-translated { font-family: 'Pretendard', sans-serif; font-size: 14px; color: #fff; line-height: 1.55; padding: 10px 12px; background: #0d0d0d; border-left: 3px solid #ffd54f; margin-bottom: 8px; }
@@ -727,6 +748,40 @@ button { font-family: inherit; cursor: pointer; }
 .guide-foot { margin-top: 18px; padding-top: 14px; border-top: 1px dashed #333; }
 .guide-foot a { color: #7cc7e8; font-family: 'Press Start 2P', monospace; font-size: 9px; letter-spacing: 1px; text-decoration: none; }
 .guide-foot a:hover { color: #fff; }
+
+/* ─── Provider keys panel (HUD 🔑) ─── */
+.keys-btn { background: #241a0d; color: #ffd54f; border-color: #ffd54f; margin-left: 6px; }
+.keys-btn:hover { background: #3a2a10; color: #fff; }
+.keys-card { border-color: #ffd54f; box-shadow: 0 0 32px rgba(255,213,79,0.18); max-width: 560px; }
+.keys-card .guide-tag { color: #ffd54f; }
+.keys-row {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 0; border-bottom: 1px dashed #222;
+  font-family: 'Pretendard', sans-serif;
+}
+.keys-row:last-of-type { border-bottom: none; }
+.keys-row--toggle { flex-direction: row; align-items: center; justify-content: space-between; }
+.keys-label { font-size: 13px; color: #eee; letter-spacing: 0.3px; }
+.keys-masked { color: #ffd54f; font-style: normal; font-size: 12px; }
+.keys-locked { color: #7cc7e8; font-style: normal; font-size: 11px; }
+.keys-input-wrap { display: flex; gap: 6px; align-items: stretch; }
+.keys-input-wrap input {
+  flex: 1; background: #0a0a0a; color: #fff;
+  border: 2px solid #444; padding: 9px 11px;
+  font-family: 'Pretendard', 'Consolas', monospace; font-size: 13px;
+  letter-spacing: 2px;
+}
+.keys-input-wrap input:focus { outline: none; border-color: #ffd54f; }
+.keys-clear {
+  background: transparent; color: #ff6b6b; border: 2px solid #552424;
+  padding: 0 12px; font-size: 18px; line-height: 1;
+}
+.keys-clear:hover { background: #3a1a1a; color: #fff; }
+.keys-msg { margin-top: 8px; padding: 8px 10px; font-family: 'Pretendard', sans-serif; font-size: 12px; }
+.keys-msg.ok  { background: #0d2414; color: #7cf09a; border-left: 3px solid #7cf09a; }
+.keys-msg.err { background: #2a0f0f; color: #ff9b9b; border-left: 3px solid #ff9b9b; }
+.keys-foot { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.keys-foot .btn-primary, .keys-foot .btn-ghost { padding: 9px 18px; font-size: 13px; }
 
 /* Mission company chip accent — use Pretendard so ASCII renders correctly */
 .mission-chip-company {
@@ -2130,6 +2185,58 @@ button { font-family: inherit; cursor: pointer; }
 .evo-kind-feature     { background: #7cc7e8; color: #062a3b; }
 .evo-kind-refactor    { background: #ffd54f; color: #3b2a00; }
 .evo-kind-retire_agent{ background: #ff9b9b; color: #3b0000; }
+.evo-kind-split_agent { background: #c9a2ff; color: #2c0a50; }
+.evo-kind-parallelize { background: #9fe8a9; color: #052e12; }
+
+/* Audit status card (inside Evolution tab) */
+.audit-status-card {
+  background: #0d1a14;
+  border: 2px solid #4ade80;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  margin-bottom: 6px;
+}
+.audit-status-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap;
+}
+.audit-status-title {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 11px;
+  color: #4ade80;
+  letter-spacing: 1px;
+}
+.audit-run-btn {
+  padding: 6px 12px;
+  font-size: 11px;
+}
+.audit-status-body {
+  font-family: 'Pretendard', sans-serif;
+  font-size: 12px; color: #d0f0d0; line-height: 1.55;
+}
+.audit-status-line.muted { color: #888; font-style: italic; }
+
+/* Audit-origin evolution card badge (🔎) */
+.evo-card.evo-audit-origin {
+  box-shadow: inset 4px 0 0 #4ade80;
+}
+.evo-audit-badge {
+  background: #0d2415;
+  color: #4ade80;
+  padding: 3px 8px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px;
+  letter-spacing: 1px;
+  border: 1px solid #4ade80;
+}
+
+/* HUD audit chip */
+.state.state-audit {
+  color: #4ade80;
+  font-family: 'Pretendard', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+}
 .evo-agent { font-family: 'Pretendard', sans-serif; font-size: 12px; color: #ccc; }
 .evo-time  { font-family: 'Consolas', monospace; font-size: 11px; color: #777; margin-left: auto; }
 .evo-title { font-family: 'Pretendard', sans-serif; font-size: 16px; color: #fff; font-weight: 700; }

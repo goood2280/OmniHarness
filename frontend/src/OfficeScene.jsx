@@ -606,8 +606,13 @@ function SceneTodo({ lang, working, backlog, reports, activity }) {
   }, [working, activity, lang]);
 
   const nextItems = useMemo(() => {
+    // 예정 = 아직 시작 안 한 백로그 (next / planning). cancelled / done /
+    // working 은 각자 다른 섹션(또는 숨김) 담당.
     return (backlog || [])
-      .filter((b) => (b.status || '').toLowerCase() !== 'done')
+      .filter((b) => {
+        const s = (b.status || '').toLowerCase();
+        return s === 'next' || s === 'planning';
+      })
       .map((b) => ({
         title: b.title || b.name || '?',
         sub: b.team ? `@${b.team}` : '',
@@ -616,12 +621,22 @@ function SceneTodo({ lang, working, backlog, reports, activity }) {
   }, [backlog, lang]);
 
   const doneItems = useMemo(() => {
-    return (reports || []).map((r) => ({
+    // 완료 = 백로그 중 status=done (+ 기존 reports 는 아래에 병합). 이전에는
+    // reports 만 봐서 실제로 끝낸 요구사항이 카운트되지 않았다.
+    const doneBacklog = (backlog || [])
+      .filter((b) => (b.status || '').toLowerCase() === 'done')
+      .map((b) => ({
+        title: b.title || b.name || '?',
+        sub: b.team ? `@${b.team}` : '',
+        desc: plainDescForBacklog(b, lang),
+      }));
+    const doneReports = (reports || []).map((r) => ({
       title: r.title || r.name || (lang === 'ko' ? '보고서' : 'report'),
       sub: r.created ? new Date(r.created).toLocaleDateString(lang === 'ko' ? 'ko-KR' : 'en-US') : '',
       desc: plainDescForReport(r, lang),
     }));
-  }, [reports, lang]);
+    return [...doneBacklog, ...doneReports];
+  }, [backlog, reports, lang]);
 
   // Per-section empty-state copy — the product owner specifically asked
   // for these three phrasings instead of one generic "nothing here".

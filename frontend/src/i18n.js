@@ -137,6 +137,18 @@ export const TRANSLATIONS = {
   'q.sending':     { ko: '전송 중…', en: 'Sending…' },
   'q.my_answer':   { ko: '내 답변', en: 'My answer' },
   'q.structured':  { ko: '에이전트 전달용 변환', en: 'Structured for agent' },
+  'q.chat_tip':    {
+    ko: '💬 채팅에서 `fabCanvas 질문 Q003 답 : <텍스트>` 로 답변 가능',
+    en: '💬 You can answer in chat with `fabCanvas question Q003 answer : <text>`',
+  },
+  'q.empty_chat_hint': {
+    ko: '💡 채팅에서 `fabCanvas 요구사항 : <텍스트>` 로 요구사항 등록 · `fabCanvas 질문 Q003 답 : <텍스트>` 로 답변',
+    en: '💡 In chat: `fabCanvas requirement : <text>` to add a requirement · `fabCanvas question Q003 answer : <text>` to reply',
+  },
+  'q.answer_ph_with_id': {
+    ko: '답변 (short_id: {sid}). 간단해도 됩니다. (예: A, 또는 "기본값 7일로 가시죠")',
+    en: 'Answer (short_id: {sid}). Short is fine (e.g. "A", or "default to 7 days").',
+  },
 
   // Reports
   'rep.empty_title': { ko: '발행된 보고서가 없습니다.', en: 'No reports yet.' },
@@ -203,7 +215,22 @@ export const TRANSLATIONS = {
   'evo.kind.feature':     { ko: '기능 추가',     en: 'New feature' },
   'evo.kind.refactor':    { ko: '리팩터링',      en: 'Refactor' },
   'evo.kind.retire_agent':{ ko: '에이전트 정리', en: 'Retire agent' },
+  'evo.kind.split_agent': { ko: '에이전트 분할', en: 'Split agent' },
+  'evo.kind.parallelize': { ko: '병렬화',         en: 'Parallelize' },
   'evo.knowledge_tab':    { ko: '누적 지식', en: 'Knowledge base' },
+
+  // Auto-audit section
+  'audit.section_title': { ko: '🔎 자동 감사 (Auto audit)', en: '🔎 Auto audit' },
+  'audit.progress': {
+    ko: '{done}번째 코디네이터 완료 · 매 {every}회마다 감사 · 다음 감사: {next}번째 완료 시',
+    en: '{done} coordinators completed · audit every {every} · next audit at {next}th',
+  },
+  'audit.run_now':  { ko: '🔎 지금 감사 실행', en: '🔎 Run audit now' },
+  'audit.running':  { ko: '감사 실행 중…', en: 'Auditing…' },
+  'audit.loading':  { ko: '감사 상태 불러오는 중…', en: 'Loading audit status…' },
+  'audit.unknown':  { ko: '감사 상태 정보 없음', en: 'No audit status available' },
+  'audit.origin_badge': { ko: '🔎 감사', en: '🔎 audit' },
+  'audit.hud_chip': { ko: '🔎 감사', en: '🔎 audit' },
 
   // Legend (team labels)
   'team.top':      { ko: '총괄 (HQ)',      en: 'HQ' },
@@ -263,6 +290,20 @@ export const TRANSLATIONS = {
   'guide.button':        { ko: '가이드', en: 'GUIDE' },
   'guide.loading':       { ko: '가이드 불러오는 중…', en: 'Loading guide…' },
   'guide.official_docs': { ko: '공식 문서 보기', en: 'Official docs' },
+
+  // Provider Keys (HUD 🔑 button → modal)
+  'keys.button':  { ko: '키', en: 'KEYS' },
+  'keys.title':   { ko: 'LLM Provider API 키', en: 'LLM Provider API keys' },
+  'keys.hint':    {
+    ko: '환경변수(.env/shell export) 대신 여기서 직접 붙여넣을 수 있습니다. 저장 즉시 적용 · 재기동에도 보존(state.json). 빈 값으로 저장하면 삭제.',
+    en: 'Paste keys here instead of setting env vars (.env/shell export). Applied immediately and persisted to state.json across restarts. Empty value clears the slot.',
+  },
+  'keys.paste':   { ko: '키 붙여넣기', en: 'Paste key' },
+  'keys.replace': { ko: '새 값 붙여넣어 덮어쓰기', en: 'Paste to replace' },
+  'keys.save':    { ko: '저장', en: 'Save' },
+  'keys.reload':  { ko: '다시 불러오기', en: 'Reload' },
+  'keys.saved':   { ko: '저장됨 · 즉시 적용', en: 'Saved · applied live' },
+  'keys.cleared': { ko: '삭제됨', en: 'Cleared' },
 
   // Mode select (first-visit)
   'mode.hello':         { ko: '어떻게 시작할까요?', en: 'How would you like to start?' },

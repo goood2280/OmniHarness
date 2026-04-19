@@ -9,6 +9,7 @@ import Onboarding from './Onboarding';
 import TabPanel from './TabPanel';
 import McpPanel from './McpPanel';
 import BedrockGuide from './BedrockGuide';
+import ProviderKeysPanel from './ProviderKeysPanel';
 import ChatDock from './ChatDock';
 import { t, DEFAULT_LANG } from './i18n';
 
@@ -28,6 +29,7 @@ export default function App() {
   const [requirements, setRequirements] = useState([]);
   const [backlog, setBacklog] = useState([]);
   const [evolution, setEvolution] = useState([]);
+  const [auditStatus, setAuditStatus] = useState(null);
   const [knowledge, setKnowledge] = useState([]);
   const [org, setOrg] = useState(null);
   const [mcps, setMcps] = useState([]);
@@ -36,6 +38,7 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [selectedMcp, setSelectedMcp] = useState(null);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [err, setErr] = useState(null);
   const [lang, setLang] = useState(() => {
@@ -110,6 +113,9 @@ export default function App() {
         .then((d) => alive && setBacklog(d.items || d.backlog || []));
       fetch('/api/evolution').then((r) => r.ok ? r.json() : {})
         .then((d) => alive && setEvolution(d.items || []));
+      fetch('/api/audit/status').then((r) => r.ok ? r.json() : null)
+        .then((d) => alive && setAuditStatus(d || null))
+        .catch(() => {});
       fetch('/api/knowledge').then((r) => r.ok ? r.json() : {})
         .then((d) => alive && setKnowledge(d.items || []));
     };
@@ -218,6 +224,7 @@ export default function App() {
         lang={lang}
         onLangChange={setLang}
         onGuideOpen={() => setGuideOpen(true)}
+        onKeysOpen={() => setKeysOpen(true)}
         mode={mode}
         onModeChange={async (m) => {
           await chooseMode(m);
@@ -225,6 +232,7 @@ export default function App() {
         }}
         onSwitchProject={() => setActiveProject('')}
         hasActiveProject={!!activeProject && mode === 'custom'}
+        auditStatus={auditStatus}
       />
       <OfficeScene
         topology={topology}
@@ -260,6 +268,7 @@ export default function App() {
       <AgentPanel agent={selected} onClose={() => setSelected(null)} lang={lang} mode={mode} costByModel={topology.cost_by_model} />
       <McpPanel mcp={selectedMcp} onClose={() => setSelectedMcp(null)} lang={lang} />
       <BedrockGuide open={guideOpen} onClose={() => setGuideOpen(false)} lang={lang} />
+      <ProviderKeysPanel open={keysOpen} onClose={() => setKeysOpen(false)} lang={lang} />
       <Tutorial lang={lang} setLang={setLang} onDone={() => {}} />
       {wizardOpen && mission && (
         <Onboarding
