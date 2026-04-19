@@ -1,6 +1,6 @@
 ---
 name: security-auditor
-description: 릴리즈 전 보안 리뷰, 권한 누수 의심 상황, 외부 의존성 업데이트 후 CVE 점검 등에서 eval-lead 또는 orchestrator 가 호출. 인증·세션·권한·경로·비밀·의존성 전반을 읽기 기반으로 감사한다.
+description: 릴리즈 전 보안 리뷰, 권한 누수 의심 상황, 외부 의존성 업데이트 후 CVE 점검 등에서 orchestrator 가 호출. 인증·세션·권한·경로·비밀·의존성 전반을 읽기 기반으로 감사한다.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---

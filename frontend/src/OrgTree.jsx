@@ -2,10 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from './i18n';
 import SharedSprite, { POSE } from './Sprite';
 
-// ── World + layout ─────────────────────────────────────────────────
-const WORLD_W = 1640;
-const WORLD_H = 1200;
-const SPRITE_W = 128;      // square sprite cell (sheet panels are 256×256)
+// ── World + layout (slimmed 2026-04-19) ────────────────────────────
+// Roster = orchestrator + dev-lead + 6 reviewers. No mgmt / domain
+// clusters any more — domain knowledge lives as markdown reference
+// docs rendered by OfficeScene's bookshelf, not here.
+const WORLD_W = 1200;
+const WORLD_H = 900;
+const SPRITE_W = 128;
 const SPRITE_H = 128;
 const NODE_W = 156;
 const NODE_H = 200;
@@ -16,55 +19,36 @@ const DRAG_THRESHOLD = 4;
 
 // Positions (world px, CENTER of the node)
 const NODE_POS = {
-  orchestrator:        { x: 820,  y: 140 },
-  'eval-lead':         { x: 300,  y: 340 },
-  'mgmt-lead':         { x: 820,  y: 340 },
-  'dev-lead':          { x: 1340, y: 340 },
+  orchestrator:        { x: 600, y: 140 },
 
-  // EVAL box — 6 members, 3×2
-  'ux-reviewer':        { x: 160, y: 580 },
-  'dev-verifier':       { x: 300, y: 580 },
-  'user-role-tester':   { x: 440, y: 580 },
-  'admin-role-tester':  { x: 160, y: 820 },
-  'security-auditor':   { x: 300, y: 820 },
-  'domain-researcher':  { x: 440, y: 820 },
+  // DEV — single full-stack agent (no fan-out)
+  'dev-lead':          { x: 240, y: 400 },
 
-  // MGMT box — 2 members
-  reporter: { x: 760, y: 580 },
-  hr:       { x: 900, y: 580 },
-
-  // DEV box — 10 feature owners, 5×2
-  'dev-dashboard':  { x: 1060, y: 580 },
-  'dev-spc':        { x: 1180, y: 580 },
-  'dev-wafer-map':  { x: 1310, y: 580 },
-  'dev-ml':         { x: 1440, y: 580 },
-  'dev-ettime':     { x: 1570, y: 580 },
-  'dev-tablemap':   { x: 1060, y: 820 },
-  'dev-tracker':    { x: 1180, y: 820 },
-  'dev-filebrowser':{ x: 1310, y: 820 },
-  'dev-admin':      { x: 1440, y: 820 },
-  'dev-messages':   { x: 1570, y: 820 },
-
-  // DOMAIN box — 4 specialists
-  'process-tagger':    { x: 1130, y: 1060 },
-  'causal-analyst':    { x: 1280, y: 1060 },
-  'dvc-curator':       { x: 1430, y: 1060 },
-  'adapter-engineer':  { x: 1580, y: 1060 },
+  // EVAL — 6 reviewers in a 3×2 grid on the right
+  'dev-verifier':      { x: 550, y: 400 },
+  'ux-reviewer':       { x: 700, y: 400 },
+  'security-auditor':  { x: 850, y: 400 },
+  'user-role-tester':  { x: 550, y: 640 },
+  'admin-role-tester': { x: 700, y: 640 },
+  'domain-researcher': { x: 850, y: 640 },
 };
 
-// Team clusters — sized to comfortably contain members + labels.
+// Team clusters — sized to wrap the live nodes.
 const CLUSTERS = [
-  { id: 'eval',   x:  60, y: 480, w: 540, h: 420, accent: '#ff9b9b' },
-  { id: 'mgmt',   x: 660, y: 480, w: 310, h: 200, accent: '#b48f5c' },
-  { id: 'dev',    x: 990, y: 480, w: 670, h: 420, accent: '#7cc7e8' },
-  { id: 'domain', x: 990, y: 960, w: 670, h: 200, accent: '#ffd54f' },
+  { id: 'dev',  x: 140, y: 310, w: 240, h: 210, accent: '#7cc7e8' },
+  { id: 'eval', x: 470, y: 310, w: 480, h: 450, accent: '#ff9b9b' },
 ];
 
-// 3 connectors: orchestrator → each lead
+// Connectors: orchestrator → dev-lead + orchestrator → each reviewer
+// (visually the orchestrator sits above both columns).
 const CONNECTORS = [
-  ['orchestrator', 'eval-lead'],
-  ['orchestrator', 'mgmt-lead'],
   ['orchestrator', 'dev-lead'],
+  ['orchestrator', 'dev-verifier'],
+  ['orchestrator', 'ux-reviewer'],
+  ['orchestrator', 'security-auditor'],
+  ['orchestrator', 'user-role-tester'],
+  ['orchestrator', 'admin-role-tester'],
+  ['orchestrator', 'domain-researcher'],
 ];
 
 // OrgTree nodes use the shared sprite-sheet renderer so the Custom

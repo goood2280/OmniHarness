@@ -1,6 +1,6 @@
 ---
 name: dev-verifier
-description: 개발팀 산출물이 요구 스펙을 실제로 충족하는지 코드/엔드포인트 수준에서 검증할 때 eval-lead가 호출.
+description: 개발팀 산출물이 요구 스펙을 실제로 충족하는지 코드/엔드포인트 수준에서 검증할 때 orchestrator 가 직접 호출.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---

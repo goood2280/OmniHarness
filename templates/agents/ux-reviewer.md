@@ -1,6 +1,6 @@
 ---
 name: ux-reviewer
-description: 프론트엔드 변경 후 UX/디자인 관점에서 일관성, 접근성, 정보 위계를 검토할 때 eval-lead가 호출.
+description: 프론트엔드 변경 후 UX/디자인 관점에서 일관성, 접근성, 정보 위계를 검토할 때 orchestrator 가 호출.
 model: sonnet
 tools: Read, Grep, Glob
 ---

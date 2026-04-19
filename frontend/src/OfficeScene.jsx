@@ -32,12 +32,13 @@ const MAX_ZOOM = 2.0;
 const ZOOM_STEP = 0.1;
 const DRAG_THRESHOLD = 4;
 
+// Post-2026-04-19 slim: only HQ + dev + eval + canteen rooms render.
+// mgmt / leads / domain rooms were empty shells and got deleted along
+// with their agents (mgmt-lead / reporter / hr / eval-lead /
+// process-tagger / causal-analyst / dvc-curator / adapter-engineer).
 const ROOM_STYLES = {
-  leads:   { wall: '#3d3a48', floor: '#7a6d58', accent: '#ffd54f' },
   eval:    { wall: '#4a2f2f', floor: '#7a5858', accent: '#ff9b9b' },
-  mgmt:    { wall: '#4a3b2a', floor: '#8c7752', accent: '#b48f5c' },
   dev:     { wall: '#2a3f52', floor: '#4a5e74', accent: '#7cc7e8' },
-  domain:  { wall: '#4a3a20', floor: '#8c7342', accent: '#ffd54f' },
   top:     { wall: '#2c2c34', floor: '#5a5868', accent: '#ffd54f' },
   canteen: { wall: '#2f4234', floor: '#6a8464', accent: '#8be28b' },
 };
@@ -113,18 +114,22 @@ function Desk({ agent, x, y, onClick, onDoubleClick, isSelected, lang, tint }) {
   );
 }
 
-// Pixel-art MCP appliance (coffee machine / server / printer) or skill book.
-// Click → opens a small detail card via onSelectItem.
+// Pixel-art MCP appliance (coffee machine / server / printer), skill
+// recipe book, or knowledge reference doc. Click → opens a small detail
+// card via onSelectItem.
 function CanteenItem({ item, x, y, onClick }) {
   const isMcp = item.kind === 'mcp';
+  const isKnowledge = item.kind === 'knowledge';
+  const klass = isMcp ? 'is-mcp' : isKnowledge ? 'is-knowledge' : 'is-skill';
+  const titlePrefix = isMcp ? 'MCP' : isKnowledge ? 'Knowledge' : 'Skill';
   return (
     <div
-      className={`canteen-item${isMcp ? ' is-mcp' : ' is-skill'}`}
+      className={`canteen-item ${klass}`}
       style={{ left: x, top: y }}
       onPointerDown={(e) => e.stopPropagation()}
       onPointerUp={(e) => e.stopPropagation()}
       onClick={onClick}
-      title={`${isMcp ? 'MCP' : 'Skill'}: ${item.label}`}
+      title={`${titlePrefix}: ${item.label}`}
     >
       <svg viewBox="0 0 32 32" width="56" height="56" style={{ imageRendering: 'pixelated' }}>
         {isMcp ? (
@@ -136,6 +141,22 @@ function CanteenItem({ item, x, y, onClick }) {
             <rect x="14" y="24" width="4" height="2" fill="#6b3d2a" />
             <rect x="12" y="26" width="8" height="2" fill="#222" />
             <rect x="8" y="10" width="4" height="2" fill="#fff" opacity="0.5" />
+          </>
+        ) : isKnowledge ? (
+          <>
+            {/* Knowledge: thick reference book with a bookmark ribbon —
+                distinct from the skill/recipe book so the user sees
+                "도메인 지식 참조 자료" at a glance. */}
+            <rect x="4" y="4" width="24" height="24" fill="#2f4a6b" />
+            <rect x="6" y="6" width="20" height="20" fill="#e8d7a0" />
+            <rect x="8" y="9" width="16" height="1" fill="#5a3a1a" />
+            <rect x="8" y="12" width="14" height="1" fill="#5a3a1a" />
+            <rect x="8" y="15" width="16" height="1" fill="#5a3a1a" />
+            <rect x="8" y="18" width="12" height="1" fill="#5a3a1a" />
+            <rect x="8" y="21" width="14" height="1" fill="#5a3a1a" />
+            {/* bookmark ribbon */}
+            <rect x="22" y="2" width="3" height="12" fill="#ff9b9b" />
+            <rect x="22" y="14" width="3" height="2" fill="#c46c6c" />
           </>
         ) : (
           <>
@@ -159,7 +180,15 @@ export default function OfficeScene({
   topology, onSelect, selected, lang,
   mcps = [], skills = [], onSelectMcp, onSelectSkill,
   backlog = [], reports = [], activity = [],
+  onSelectKnowledge,
 }) {
+  // Knowledge reference docs (slug → title). After the 2026-04-19 slim,
+  // domain agents (process-tagger etc.) are replaced by these markdown
+  // docs that dev-lead/orchestrator read directly. Rendered as a small
+  // bookshelf in the canteen so the viewer has a visual anchor for
+  // "도메인 지식은 에이전트가 아닌 참조 자료" principle.
+  const knowledgeDocs = (topology && topology.knowledge) || [];
+
   const rootRef = useRef(null);
   const [zoom, setZoom] = useState(0.75);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -167,18 +196,21 @@ export default function OfficeScene({
 
   const agents = (topology && topology.agents) || [];
 
-  // Re-bucket the agents so each team's lead sits INSIDE that team's
-  // room (and is rendered first). Previously leads were in their own
-  // strip below HQ — the user wants the lead clearly above each team
-  // they oversee instead.
+  // dev-lead sits at the top of the dev room. No other leads — eval
+  // reviewers don't have a lead (orchestrator calls them directly).
   const LEAD_TEAM_OF = {
-    'dev-lead':  'dev',
-    'eval-lead': 'eval',
-    'mgmt-lead': 'mgmt',
+    'dev-lead': 'dev',
   };
+  // Agents whose backend team isn't in the active room set get dropped
+  // on the floor — we no longer render mgmt / leads / domain rooms, so
+  // any stray legacy agent there is visually omitted rather than
+  // summoning an empty room back. Keeps the scene clean when
+  // `_state/state.json` still holds retired names.
+  const ACTIVE_TEAMS = new Set(['top', 'dev', 'eval']);
   const byTeam = {};
   for (const a of agents) {
-    const k = LEAD_TEAM_OF[a.name] || a.team || 'misc';
+    const k = LEAD_TEAM_OF[a.name] || a.team;
+    if (!ACTIVE_TEAMS.has(k)) continue;
     if (!byTeam[k]) byTeam[k] = [];
     byTeam[k].push(a);
   }
@@ -206,40 +238,48 @@ export default function OfficeScene({
     return { cols, rows, w: 80 + cols * 200, h: 60 + rows * 240 };
   };
 
-  const mgmtRoom   = roomFor(byTeam.mgmt   || []);
-  const evalRoom   = roomFor(byTeam.eval   || []);
-  const devRoom    = roomFor(byTeam.dev    || []);
-  const domainRoom = roomFor(byTeam.domain || []);
+  const evalRoom = roomFor(byTeam.eval || []);
+  const devRoom  = roomFor(byTeam.dev  || []);
 
-  // Canteen sized so MCP and Skill columns each get equal width and a
-  // clean grid (no overlapping items). 5 MCPs + 4 skills = 9 cells.
+  // Canteen sized so MCP / Skill / Knowledge columns each get equal
+  // width and a clean grid. MCPs (appliances) + Skills (recipe books) +
+  // Knowledge (domain reference docs) — three vertical strips divided
+  // by a 60px gap each.
   const ITEM_TILE = 110;
   const ITEM_GAP = 14;
   const mcpCols = Math.min(3, Math.max(1, mcps.length));
   const mcpRows = Math.ceil(mcps.length / mcpCols) || 1;
   const skillCols = Math.min(2, Math.max(1, skills.length));
   const skillRows = Math.ceil(skills.length / skillCols) || 1;
-  const canteenSectionH = 80 + Math.max(mcpRows, skillRows) * (ITEM_TILE + ITEM_GAP);
+  const knowledgeCols = knowledgeDocs.length > 0 ? Math.min(2, knowledgeDocs.length) : 0;
+  const knowledgeRows = knowledgeCols ? Math.ceil(knowledgeDocs.length / knowledgeCols) : 0;
+  const canteenSectionH = 80 + Math.max(mcpRows, skillRows, knowledgeRows || 0) * (ITEM_TILE + ITEM_GAP);
   const canteenRoom = {
-    w: 80 + mcpCols * (ITEM_TILE + ITEM_GAP) + 60 /* divider */ + skillCols * (ITEM_TILE + ITEM_GAP),
+    w: 80 + mcpCols * (ITEM_TILE + ITEM_GAP)
+         + 60 /* divider */ + skillCols * (ITEM_TILE + ITEM_GAP)
+         + (knowledgeCols
+              ? 60 /* divider */ + knowledgeCols * (ITEM_TILE + ITEM_GAP)
+              : 0),
     h: canteenSectionH,
   };
 
   const W = Math.max(1700, 360 + Math.max(
-    mgmtRoom.w + evalRoom.w + devRoom.w + 80,
-    domainRoom.w + canteenRoom.w + 80,
+    devRoom.w + evalRoom.w + 80,
+    canteenRoom.w + 80,
   ));
   const GUTTER = 40;
 
   const HQ    = { x: W / 2 - 220, y: 40,  w: 440, h: 240, team: 'top' };
 
   const floor2Y = HQ.y + HQ.h + 80;
-  const floor2Rooms = [
-    { key: 'mgmt', room: mgmtRoom, team: 'mgmt' },
-    { key: 'eval', room: evalRoom, team: 'eval' },
-    { key: 'dev',  room: devRoom,  team: 'dev'  },
-  ];
-  const totalF2W = floor2Rooms.reduce((a, r) => a + r.room.w, 0) + GUTTER * (floor2Rooms.length - 1);
+  // Only dev + eval rooms render on floor 2. Empty ones (no agents yet)
+  // still get skipped so we never draw a blank placeholder wall.
+  const floor2Rooms = [];
+  if ((byTeam.dev  || []).length > 0) floor2Rooms.push({ key: 'dev',  room: devRoom,  team: 'dev'  });
+  if ((byTeam.eval || []).length > 0) floor2Rooms.push({ key: 'eval', room: evalRoom, team: 'eval' });
+  const totalF2W = floor2Rooms.length
+    ? floor2Rooms.reduce((a, r) => a + r.room.w, 0) + GUTTER * (floor2Rooms.length - 1)
+    : 0;
   let fx = (W - totalF2W) / 2;
   const floor2 = [];
   let f2MaxH = 0;
@@ -250,23 +290,17 @@ export default function OfficeScene({
   }
 
   const floor3Y = floor2Y + f2MaxH + 60;
-  let DOMAIN = null;
-  if ((byTeam.domain || []).length > 0) {
-    DOMAIN = {
-      x: W / 2 - (domainRoom.w + canteenRoom.w + GUTTER) / 2,
-      y: floor3Y, w: domainRoom.w, h: domainRoom.h, team: 'domain',
-    };
-  }
+  // Canteen — centered below floor 2. Domain room is gone (domain
+  // knowledge lives as bookshelf items inside the canteen now).
+  const CANTEEN = {
+    x: W / 2 - canteenRoom.w / 2,
+    y: floor3Y,
+    w: canteenRoom.w,
+    h: canteenRoom.h,
+    team: 'canteen',
+  };
 
-  // Canteen — always present, sits next to domain (or centered below leads)
-  const CANTEEN = DOMAIN
-    ? { x: DOMAIN.x + DOMAIN.w + GUTTER, y: floor3Y, w: canteenRoom.w, h: canteenRoom.h, team: 'canteen' }
-    : { x: W / 2 - canteenRoom.w / 2, y: floor3Y, w: canteenRoom.w, h: canteenRoom.h, team: 'canteen' };
-
-  const H = Math.max(
-    CANTEEN.y + CANTEEN.h,
-    DOMAIN ? DOMAIN.y + DOMAIN.h : 0,
-  ) + 120;
+  const H = CANTEEN.y + CANTEEN.h + 120;
 
   const agentPos = {};
   const assign = (room, list, cols) => {
@@ -281,10 +315,9 @@ export default function OfficeScene({
   }
   for (const room of floor2) {
     const team = room.team;
-    const r = team === 'mgmt' ? mgmtRoom : team === 'eval' ? evalRoom : devRoom;
+    const r = team === 'eval' ? evalRoom : devRoom;
     assign(room, byTeam[team] || [], r.cols);
   }
-  if (DOMAIN) assign(DOMAIN, byTeam.domain || [], domainRoom.cols);
 
   useEffect(() => {
     if (!rootRef.current) return;
@@ -425,8 +458,7 @@ export default function OfficeScene({
   const allRooms = [
     { ...HQ, key: 'hq', labelKey: 'team.top', count: (byTeam.top || []).length },
     ...floor2.map((r) => ({ ...r, labelKey: `team.${r.team}`, count: (byTeam[r.team] || []).length })),
-    ...(DOMAIN ? [{ ...DOMAIN, key: 'domain', labelKey: 'team.domain', count: (byTeam.domain || []).length }] : []),
-    { ...CANTEEN, key: 'canteen', labelKey: 'team.canteen', count: mcps.length + skills.length },
+    { ...CANTEEN, key: 'canteen', labelKey: 'team.canteen', count: mcps.length + skills.length + (knowledgeDocs?.length || 0) },
   ];
 
   // Canteen item layout — clean two-column-group grid with MCPs on the
@@ -457,6 +489,23 @@ export default function OfficeScene({
       y: mcpAreaY + row * (ITEM_TILE + ITEM_GAP),
     });
   });
+  // Knowledge bookshelf — rendered as pixel "books" (reuse skill sprite)
+  // positioned to the right of the skill column with its own divider.
+  if (knowledgeCols > 0) {
+    const knowledgeAreaX = skillAreaX + skillCols * (ITEM_TILE + ITEM_GAP) + 60;
+    knowledgeDocs.forEach((k, i) => {
+      const col = i % knowledgeCols;
+      const row = Math.floor(i / knowledgeCols);
+      canteenContent.push({
+        kind: 'knowledge',
+        id: k.slug,
+        slug: k.slug,
+        label: lang === 'en' ? (k.title_en || k.slug) : (k.title_ko || k.slug),
+        x: knowledgeAreaX + col * (ITEM_TILE + ITEM_GAP),
+        y: mcpAreaY + row * (ITEM_TILE + ITEM_GAP),
+      });
+    });
+  }
 
   return (
     <div
@@ -575,6 +624,7 @@ export default function OfficeScene({
               e.stopPropagation();
               if (item.kind === 'mcp' && onSelectMcp) onSelectMcp(item);
               else if (item.kind === 'skill' && onSelectSkill) onSelectSkill(item);
+              else if (item.kind === 'knowledge' && onSelectKnowledge) onSelectKnowledge(item);
             }}
           />
         ))}

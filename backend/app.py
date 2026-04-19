@@ -116,20 +116,21 @@ ACTIVE_PROJECT_FILE = ROOT / ".active_project"
 APP_MODE_FILE = ROOT / ".app_mode"  # "general" | "custom" | ""
 KNOWLEDGE_FILE_LEGACY = ROOT / "knowledge.json"
 
-# ── Roles ────────────────────────────────────────────────────────────
-# BASE: always present regardless of project. These are the universal
-# coordination + evaluation + management roles.
-# DYNAMIC (dev + domain): proposed per project during onboarding, added
-# to the roster on confirmation.
+# ── Roles (slimmed 2026-04-19) ───────────────────────────────────────
+# Only real multi-agent value survives: context-isolation (dev-lead) and
+# independent-perspective reviewers. mgmt-lead/reporter/hr/eval-lead are
+# removed — orchestrator writes Questions/Reports in plain language
+# directly, and roster changes go through user approval instead of an
+# HR proposal gate.
+#
+# Domain rules (process_area / causal / dvc / adapter) are reference
+# documents under projects/<proj>/knowledge/, not agents. The viewer
+# renders them as bookshelf/cabinet sprites, not characters.
 #
 # Each entry: name → (team_id, label_color)
 BASE_ROLES: dict[str, tuple[str, str]] = {
     "orchestrator":      ("top",   "#E87722"),
-    "dev-lead":          ("leads", "#7cc7e8"),
-    "mgmt-lead":         ("leads", "#b48f5c"),
-    "eval-lead":         ("leads", "#ff9b9b"),
-    "reporter":          ("mgmt",  "#b48f5c"),
-    "hr":                ("mgmt",  "#8a6a3a"),
+    "dev-lead":          ("dev",   "#7cc7e8"),
     "ux-reviewer":       ("eval",  "#ff9b9b"),
     "dev-verifier":      ("eval",  "#e57373"),
     "user-role-tester":  ("eval",  "#a56c4c"),
@@ -138,24 +139,28 @@ BASE_ROLES: dict[str, tuple[str, str]] = {
     "domain-researcher": ("eval",  "#6c5a44"),
 }
 
-# Candidate dev/domain templates that MAY be proposed by the orchestrator.
-# These are catalog entries — only the confirmed subset becomes part of
-# the live roster.
-DEV_CATALOG = [
-    "dev-dashboard", "dev-spc", "dev-wafer-map", "dev-ml", "dev-ettime",
-    "dev-tablemap", "dev-tracker", "dev-filebrowser", "dev-admin", "dev-messages",
-]
-DOMAIN_CATALOG = [
-    "process-tagger", "causal-analyst", "dvc-curator", "adapter-engineer",
+# No catalog fan-out anymore. dev-lead is a single full-stack agent;
+# feature areas live as activity-log tags ("dashboard", "spc", ...) on
+# dev-lead's work stream. Kept for backward compatibility with old
+# mission.json payloads — always empty for new projects.
+DEV_CATALOG: list[str] = []
+DOMAIN_CATALOG: list[str] = []
+
+# Knowledge documents live under projects/<proj>/knowledge/*.md. These
+# are the canonical slugs the viewer renders as bookshelf items and the
+# orchestrator/dev-lead reads directly.
+KNOWLEDGE_CATALOG: list[str] = [
+    "process_area_rules",
+    "causal_direction_matrix",
+    "dvc_parameter_directions",
+    "adapter_mapping_rules",
 ]
 
 TEAMS = [
-    {"id": "top",    "label_ko": "총괄",         "label_en": "HQ"},
-    {"id": "leads",  "label_ko": "팀 리드",       "label_en": "Team Leads"},
-    {"id": "dev",    "label_ko": "개발팀",        "label_en": "Dev Team"},
-    {"id": "domain", "label_ko": "도메인 전문",   "label_en": "Domain Specialists"},
-    {"id": "mgmt",   "label_ko": "경영지원팀",    "label_en": "Management Support"},
-    {"id": "eval",   "label_ko": "평가팀",        "label_en": "Evaluation"},
+    {"id": "top",       "label_ko": "총괄",          "label_en": "HQ"},
+    {"id": "dev",       "label_ko": "개발",          "label_en": "Dev"},
+    {"id": "eval",      "label_ko": "리뷰어",        "label_en": "Reviewers"},
+    {"id": "knowledge", "label_ko": "지식 자료",     "label_en": "Knowledge"},
 ]
 
 State = Literal["idle", "working", "waiting"]
@@ -192,11 +197,24 @@ ACTIVITY: deque = deque(maxlen=300)
 PROVIDER_KEYS: dict[str, str] = {}
 
 # Maps the UI key slot → actual os.environ name we mirror into.
+# Bedrock easy-connect: three AWS creds slots + one toggle. On Windows
+# we also persist via `setx` (see /api/providers/aws/persist_windows)
+# so values survive a reboot without needing .env editing.
+#
+# Heterogeneous providers (Gemini image, ElevenLabs voice, …) sit
+# alongside Claude here — OmniHarness lets the user wire each one once
+# so subagents like `asset-maker` (image) or `voice-io` (TTS/STT) can
+# dispatch to the provider that actually handles that modality well.
 _PROVIDER_ENV_MAP: dict[str, str] = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai":    "OPENAI_API_KEY",
-    "gemini":    "GEMINI_API_KEY",
-    "bedrock":   "CLAUDE_CODE_USE_BEDROCK",
+    "anthropic":             "ANTHROPIC_API_KEY",
+    "openai":                "OPENAI_API_KEY",
+    "gemini":                "GEMINI_API_KEY",
+    "elevenlabs":            "ELEVENLABS_API_KEY",
+    "falai":                 "FAL_KEY",
+    "bedrock":               "CLAUDE_CODE_USE_BEDROCK",
+    "aws_access_key_id":     "AWS_ACCESS_KEY_ID",
+    "aws_secret_access_key": "AWS_SECRET_ACCESS_KEY",
+    "aws_region":            "AWS_REGION",
 }
 
 
@@ -301,7 +319,9 @@ _STATE_PATH = _STATE_DIR / "state.json"
 
 
 def _known_agent_names() -> list[str]:
-    """BASE + DEV_CATALOG + DOMAIN_CATALOG 를 합친 26 에이전트."""
+    """BASE + DEV_CATALOG + DOMAIN_CATALOG. Slimmed in 2026-04-19 —
+    BASE is now 8 agents (orchestrator + dev-lead + 6 reviewers), and
+    the catalogs are empty. Kept for API-shape compatibility."""
     return list(BASE_ROLES.keys()) + list(DEV_CATALOG) + list(DOMAIN_CATALOG)
 
 
@@ -851,16 +871,29 @@ app = FastAPI(title="OmniHarness Viewer", version="0.5.0")
 @app.get("/api/topology")
 def topology():
     agents = load_agents()
+    # Only return teams that actually have members — post-slim there are
+    # no silent placeholder rooms (mgmt/domain used to render empty).
     teams_out = []
     for t in TEAMS:
         members = [a["name"] for a in agents if a["team"] == t["id"]]
+        if not members and t["id"] not in ("top", "dev", "eval"):
+            continue  # hide empty non-core rooms (knowledge-only teams too)
         teams_out.append({**t, "members": members})
+    # Knowledge reference docs — rendered as bookshelf items in the scene,
+    # not as agents. Each slug maps to projects/<proj>/knowledge/<slug>.md.
+    mission = load_mission()
+    knowledge_slugs = (mission.get("knowledge") or []) if isinstance(mission, dict) else []
+    knowledge = []
+    for slug in knowledge_slugs:
+        pretty = slug.replace("_", " ").title()
+        knowledge.append({"slug": slug, "title_ko": pretty, "title_en": pretty})
     pending_q = sum(1 for q in QUESTIONS if q["status"] in ("pending_user",))
     pending_req = sum(1 for r in REQUIREMENTS if r["status"] not in ("done", "cancelled"))
     pending_evo = sum(1 for e in EVOLUTION if e["status"] == "proposed")
     return {
         "agents": agents,
         "teams": teams_out,
+        "knowledge": knowledge,
         "total": len(agents),
         "cost_total": round(COST_TOTAL, 4),
         "cost_by_model": {k: round(v, 4) for k, v in COST_BY_MODEL.items()},
@@ -1136,52 +1169,31 @@ def set_mission(m: MissionIn):
 
 
 def _propose_team(mission: dict) -> tuple[list[str], list[str], str]:
-    """Heuristic roster proposal based on industry keywords.
+    """Fixed-shape roster proposal (slimmed 2026-04-19).
 
-    This is a *default* proposal; the real Claude Code orchestrator can
-    call /api/mission with a more informed suggestion. The viewer just
-    needs something reasonable to show in the onboarding wizard."""
+    Every project gets the same 8-agent roster now — orchestrator +
+    dev-lead + 6 reviewers. Feature-specific dev-* fan-out and domain
+    specialists are gone; feature work is tagged on dev-lead's activity
+    stream, and domain rules live as markdown under `projects/<proj>/
+    knowledge/*.md`. Industry keywords still drive the initial knowledge
+    seeding (e.g. a fab project gets 4 canonical knowledge docs)."""
     industry = (mission.get("industry") or "").lower()
     goal = (mission.get("goal") or "").lower()
     blob = f"{industry} {goal}"
 
-    dev: list[str] = []
-    reason_parts: list[str] = []
-
-    # Always a dashboard + an admin console for any web app
-    dev.extend(["dev-dashboard", "dev-admin"])
-
+    dev: list[str] = ["dev-lead"]
+    domain: list[str] = []  # no domain agents anymore — see knowledge/
     if any(k in blob for k in ["semicon", "fab", "반도체", "wafer", "yield", "수율"]):
-        dev.extend(["dev-spc", "dev-wafer-map", "dev-ml", "dev-tablemap"])
-        domain = ["process-tagger", "causal-analyst", "dvc-curator", "adapter-engineer"]
-        reason_parts.append("반도체/수율 도메인 감지 → SPC · Wafer Map · ML + 공정 전문가 4인")
+        reason = (
+            "반도체/수율 도메인 감지 → dev-lead 1 + 리뷰어 6 + knowledge 4 "
+            "(process_area / causal_direction / dvc_parameter / adapter_mapping)"
+        )
     elif any(k in blob for k in ["commerce", "shop", "쇼핑", "retail", "order"]):
-        dev.extend(["dev-tracker", "dev-messages", "dev-filebrowser"])
-        domain = []
-        reason_parts.append("이커머스 도메인 감지 → 주문/메시지/파일 관리")
+        reason = "이커머스 도메인 감지 → dev-lead + 리뷰어 6 (knowledge 는 프로젝트별 추가)"
     elif any(k in blob for k in ["data", "analytics", "분석", "ml", "ai", "model"]):
-        dev.extend(["dev-ml", "dev-tablemap", "dev-ettime"])
-        domain = ["causal-analyst", "dvc-curator"]
-        reason_parts.append("데이터/분석 도메인 감지 → ML · 테이블맵 + 분석 전문가")
+        reason = "데이터/분석 도메인 감지 → dev-lead + 리뷰어 6 (knowledge 는 프로젝트별 추가)"
     else:
-        # Generic web product
-        dev.extend(["dev-tracker", "dev-filebrowser", "dev-messages"])
-        domain = []
-        reason_parts.append("범용 웹 프로젝트로 판단 → 트래커/파일/메시지 기능 커버")
-
-    # Deduplicate while preserving order
-    def dedup(xs):
-        seen = set()
-        out = []
-        for x in xs:
-            if x not in seen:
-                seen.add(x)
-                out.append(x)
-        return out
-
-    dev = dedup([x for x in dev if x in DEV_CATALOG])
-    domain = dedup([x for x in domain if x in DOMAIN_CATALOG])
-    reason = "  •  ".join(reason_parts)
+        reason = "범용 웹 프로젝트 → dev-lead + 리뷰어 6 (knowledge 는 프로젝트별 추가)"
     return dev, domain, reason
 
 
@@ -1485,6 +1497,67 @@ def team_catalog():
 
 @app.get("/api/guide/bedrock")
 def get_bedrock_guide():
+    # IAM 정책 스니펫 — copy-pastable. `bedrock:InvokeModel` +
+    # `bedrock:InvokeModelWithResponseStream` 만 최소 권한으로 묶는다.
+    iam_policy = (
+        "{\n"
+        '  "Version": "2012-10-17",\n'
+        '  "Statement": [{\n'
+        '    "Effect": "Allow",\n'
+        '    "Action": [\n'
+        '      "bedrock:InvokeModel",\n'
+        '      "bedrock:InvokeModelWithResponseStream"\n'
+        "    ],\n"
+        '    "Resource": [\n'
+        '      "arn:aws:bedrock:*::foundation-model/anthropic.claude-*"\n'
+        "    ]\n"
+        "  }]\n"
+        "}"
+    )
+    win_setx_body = (
+        "cmd.exe 에서 영구 저장 (setx — 현재 창에는 적용 안 됨, 새 창부터):\n\n"
+        "```\n"
+        "setx CLAUDE_CODE_USE_BEDROCK 1\n"
+        "setx AWS_ACCESS_KEY_ID AKIA...\n"
+        "setx AWS_SECRET_ACCESS_KEY wJalrXUtn...\n"
+        "setx AWS_REGION us-east-1\n"
+        "setx ANTHROPIC_MODEL anthropic.claude-opus-4-7-v1:0\n"
+        "setx ANTHROPIC_SMALL_FAST_MODEL anthropic.claude-haiku-4-5-20251001-v1:0\n"
+        "```\n\n"
+        "PowerShell 에서 현재 세션만:\n\n"
+        "```\n"
+        "$env:CLAUDE_CODE_USE_BEDROCK = '1'\n"
+        "$env:AWS_ACCESS_KEY_ID = 'AKIA...'\n"
+        "$env:AWS_SECRET_ACCESS_KEY = 'wJalrXUtn...'\n"
+        "$env:AWS_REGION = 'us-east-1'\n"
+        "$env:ANTHROPIC_MODEL = 'anthropic.claude-opus-4-7-v1:0'\n"
+        "```\n\n"
+        "OmniHarness 웹 UI 에서 입력한 값은 이미 프로세스 환경에 주입돼 있으니 "
+        "서버 재시작 없이 바로 동작합니다 — `setx` 는 **다른 터미널/프로그램**에서도 "
+        "같은 자격증명을 쓰고 싶을 때만."
+    )
+    win_setx_body_en = (
+        "Persistent on Windows (setx — opens a NEW shell to see them):\n\n"
+        "```\n"
+        "setx CLAUDE_CODE_USE_BEDROCK 1\n"
+        "setx AWS_ACCESS_KEY_ID AKIA...\n"
+        "setx AWS_SECRET_ACCESS_KEY wJalrXUtn...\n"
+        "setx AWS_REGION us-east-1\n"
+        "setx ANTHROPIC_MODEL anthropic.claude-opus-4-7-v1:0\n"
+        "setx ANTHROPIC_SMALL_FAST_MODEL anthropic.claude-haiku-4-5-20251001-v1:0\n"
+        "```\n\n"
+        "PowerShell for the current session only:\n\n"
+        "```\n"
+        "$env:CLAUDE_CODE_USE_BEDROCK = '1'\n"
+        "$env:AWS_ACCESS_KEY_ID = 'AKIA...'\n"
+        "$env:AWS_SECRET_ACCESS_KEY = 'wJalrXUtn...'\n"
+        "$env:AWS_REGION = 'us-east-1'\n"
+        "$env:ANTHROPIC_MODEL = 'anthropic.claude-opus-4-7-v1:0'\n"
+        "```\n\n"
+        "Values entered in the OmniHarness web UI are already injected into the "
+        "running process — use `setx` only if you want the same creds in other "
+        "terminals/programs."
+    )
     return {
         "title_ko": "Amazon Bedrock 으로 Claude Code CLI 운영",
         "title_en": "Run Claude Code CLI on Amazon Bedrock",
@@ -1493,28 +1566,32 @@ def get_bedrock_guide():
              "body": "사내 AWS 계정이 이미 있다면, 별도 Anthropic 계약 없이 회사 결제/감사 체계 안에서 Claude 모델을 쓸 수 있습니다. 데이터가 AWS 경계 안에 머무르고, IAM 으로 접근 통제가 됩니다."},
             {"h": "1. 모델 접근 승인",
              "body": "AWS 콘솔 → Bedrock → 왼쪽 `Model access` → `Manage model access` → Anthropic 모델 (Claude 4.x Opus/Sonnet/Haiku) 체크 후 Submit. 승인까지 몇 분~수 시간."},
-            {"h": "2. AWS 자격증명 설정",
-             "body": "`aws configure` 로 AccessKey/Secret/Region 입력 (권장 리전: us-east-1 또는 us-west-2). IAM 유저에는 `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream` 권한 필요."},
-            {"h": "3. Claude Code CLI 환경변수",
+            {"h": "2. IAM 정책 (최소 권한)",
+             "body": "해당 IAM 유저/역할에 다음 정책을 attach 합니다:\n\n```\n" + iam_policy + "\n```"},
+            {"h": "3. Windows 환경변수 (setx / PowerShell)",
+             "body": win_setx_body},
+            {"h": "4. 쉘 (macOS / Linux) 환경변수",
              "body": "쉘 rc 파일(.zshrc / .bashrc) 에 추가:\n\n```\nexport CLAUDE_CODE_USE_BEDROCK=1\nexport AWS_REGION=us-east-1\nexport ANTHROPIC_MODEL=anthropic.claude-opus-4-7-v1:0\nexport ANTHROPIC_SMALL_FAST_MODEL=anthropic.claude-haiku-4-5-20251001-v1:0\n```"},
-            {"h": "4. OmniHarness 와 연결 (두 가지 경로)",
-             "body": "A) CLI 경로 — 프로젝트 디렉토리에서 `claude` 실행 시, `.claude/settings.json` 의 훅이 OmniHarness 뷰어(`OMNIHARNESS_URL`, 기본 http://localhost:8082)로 에이전트 상태를 밀어 넣습니다.\n\nB) 웹 경로 — 뷰어 우측 하단의 💬 질문하기 채팅으로 orchestrator 에게 바로 질문할 수 있습니다. 백엔드에 `CLAUDE_CODE_USE_BEDROCK=1` 과 AWS 자격증명이 설정되어 있으면 Bedrock 의 Claude Opus 가 응답하고, 없으면 STUB 로 동작합니다. Anthropic 공식 API 를 쓰려면 `ANTHROPIC_API_KEY` 만 설정하면 됩니다."},
-            {"h": "검증",
-             "body": "`claude --version` 이 실행되고 간단한 프롬프트에 응답하면 성공. 에러 발생 시 `aws bedrock list-foundation-models --region us-east-1` 로 모델 목록이 보이는지 먼저 확인."},
+            {"h": "5. OmniHarness 에 연결 (가장 빠른 길)",
+             "body": "HUD 의 🔑 키 패널에서 **AWS Access Key / Secret / Region** 입력 → **Bedrock 사용** 체크 → **🔌 연결 테스트** 클릭. 성공하면 바로 Requirements 입력 시 Bedrock Claude 가 orchestrator 로 응답합니다. `setx` 없이도 OmniHarness 프로세스가 살아있는 동안은 OK."},
+            {"h": "6. 검증",
+             "body": "`aws bedrock list-foundation-models --region us-east-1` 로 모델 목록이 보이는지 먼저 확인. 그 다음 OmniHarness 🔑 키 패널의 🔌 연결 테스트 버튼 → 한국어 힌트로 에러 원인 진단."},
         ],
         "sections_en": [
             {"h": "Why Bedrock?",
              "body": "If you already have an AWS account, you can use Claude models through your existing billing/audit boundary without a separate Anthropic contract. Data stays inside AWS; IAM controls access."},
             {"h": "1. Request model access",
              "body": "AWS Console → Bedrock → `Model access` → `Manage model access` → check Anthropic models (Claude 4.x Opus/Sonnet/Haiku) → Submit. Approval takes minutes to hours."},
-            {"h": "2. Configure AWS credentials",
-             "body": "`aws configure` with Access Key / Secret / Region (recommend us-east-1 or us-west-2). IAM user needs `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream`."},
-            {"h": "3. Claude Code CLI env vars",
+            {"h": "2. IAM policy (least privilege)",
+             "body": "Attach this policy to the IAM user/role:\n\n```\n" + iam_policy + "\n```"},
+            {"h": "3. Windows env vars (setx / PowerShell)",
+             "body": win_setx_body_en},
+            {"h": "4. Shell env vars (macOS / Linux)",
              "body": "Add to shell rc:\n\n```\nexport CLAUDE_CODE_USE_BEDROCK=1\nexport AWS_REGION=us-east-1\nexport ANTHROPIC_MODEL=anthropic.claude-opus-4-7-v1:0\nexport ANTHROPIC_SMALL_FAST_MODEL=anthropic.claude-haiku-4-5-20251001-v1:0\n```"},
-            {"h": "4. Wire into OmniHarness (two paths)",
-             "body": "A) CLI path — running `claude` inside a project dir: hooks in `.claude/settings.json` push agent state to the viewer (env `OMNIHARNESS_URL`, default http://localhost:8082).\n\nB) Web path — the 💬 chat dock (bottom-right) talks to the orchestrator directly. With `CLAUDE_CODE_USE_BEDROCK=1` + AWS creds in the backend env, it runs on Bedrock Claude Opus. With `ANTHROPIC_API_KEY`, it uses the Anthropic API. Without either, it returns STUB responses so you can still exercise the UI flow."},
-            {"h": "Verification",
-             "body": "`claude --version` works and answers a simple prompt. On error, first verify `aws bedrock list-foundation-models --region us-east-1` returns the models."},
+            {"h": "5. Fastest path via OmniHarness",
+             "body": "In the 🔑 keys panel: enter **AWS Access Key / Secret / Region** → check **Use Bedrock** → click **🔌 Test connection**. On success, Requirements immediately route through Bedrock Claude as orchestrator. No `setx` needed while the OmniHarness process is alive."},
+            {"h": "6. Verification",
+             "body": "Run `aws bedrock list-foundation-models --region us-east-1` to confirm the models show up. Then use the 🔌 Test connection button in the 🔑 keys panel — errors come back with Korean hints pointing to the usual causes."},
         ],
     }
 
@@ -1526,7 +1603,7 @@ def list_requirements():
 
 
 @app.post("/api/requirements")
-def create_requirement(r: RequirementIn):
+async def create_requirement(r: RequirementIn):
     rid = str(uuid.uuid4())[:8]
     item = {
         "id": rid,
@@ -1562,7 +1639,153 @@ def create_requirement(r: RequirementIn):
             _coordinator.start_coordinator(rid)
         except Exception as e:
             log_event("orchestrator", "coord", f"coordinator 자동시작 실패: {e}")
+
+    # ── Orchestrator agentic seed (Bedrock / Anthropic / …) ─────────
+    # When a provider is configured, the orchestrator drafts an initial
+    # Report + up to 3 plain-Korean Questions + feature tags in the
+    # background. This is what makes "Requirements 입력 → 바로 Claude
+    # Code 같은 자연스러움" work: the user writes a requirement and the
+    # orchestrator immediately starts doing something visible, instead
+    # of waiting for Claude Code CLI hooks. Falls back silently to no-op
+    # when no LLM key is set (STUB mode). Env opt-out with
+    # ``OMNI_ORCHESTRATOR_SEED=0``.
+    seed_enabled = os.environ.get("OMNI_ORCHESTRATOR_SEED", "1") in ("1", "true", "True")
+    if seed_enabled:
+        provider = _detect_provider()
+        if provider in ("anthropic", "bedrock", "openai", "gemini"):
+            try:
+                asyncio.create_task(_run_orchestrator_seed(rid, r.text, provider))
+            except Exception as e:
+                log_event("orchestrator", "seed", f"seed 자동시작 실패: {e}")
     return item
+
+
+async def _run_orchestrator_seed(rid: str, text: str, provider: str) -> None:
+    """Background — ask the configured LLM (usually Bedrock Claude) to
+    draft an orchestrator-level response to a fresh requirement. We
+    light up the orchestrator agent as ``working`` during the call so
+    the viewer reflects real activity, then drop back to ``idle`` once
+    the Questions + Report are seeded.
+
+    Output shape (JSON): {summary, feature_tags[], questions[], report_md}.
+    Malformed JSON is swallowed — the seed is best-effort, not required.
+    """
+    _set_state_safe("orchestrator", "working")
+    log_event("orchestrator", "seed", f"요구사항 초안 작성 시작 ({provider})")
+    try:
+        mission = load_mission()
+        knowledge_slugs = (mission.get("knowledge") or []) if isinstance(mission, dict) else []
+        system = (
+            "당신은 OmniHarness 의 orchestrator 입니다. 사용자가 방금 올린 FabCanvas 요구사항을 받고, "
+            "단일 턴으로 다음 JSON 스키마에 맞는 초안을 작성하세요. 반드시 파싱 가능한 JSON 만 출력, "
+            "설명 문장 금지.\n"
+            "{\n"
+            '  "summary": "2~3문장 요약 (평어체, 기술용어 최소)",\n'
+            '  "feature_tags": ["dashboard"|"spc"|"ml"|"wafer-map"|"tablemap"|"ettime"|"tracker"|"filebrowser"|"admin"|"messages" … 0~3개],\n'
+            '  "questions": ["사용자에게 물어야 할 불확실한 점 (평어체)", ...최대 3개],\n'
+            '  "report_md": "# 초안\\n\\n평어체 마크다운으로 된 초기 계획·접근 방식"\n'
+            "}\n"
+            f"\n프로젝트: {mission.get('company', '')} · {mission.get('industry', '')}\n"
+            f"목표: {mission.get('goal', '')}\n"
+            f"참조 가능한 knowledge 문서: {', '.join(knowledge_slugs) or '(없음)'}\n"
+            "리뷰어로는 dev-verifier · security-auditor · ux-reviewer · user-role-tester · "
+            "admin-role-tester · domain-researcher 가 on-demand 로 존재. 구현은 dev-lead 단일 에이전트."
+        )
+        user = f"요구사항: {text.strip()[:2000]}"
+        # _llm_oneshot is sync — push it to a thread so we don't block
+        # the event loop while the Bedrock call takes a few seconds.
+        raw = await asyncio.to_thread(_llm_oneshot, system, user, provider)
+        payload = _parse_seed_json(raw)
+        if not payload:
+            log_event("orchestrator", "seed", "⚠️ 초안 JSON 파싱 실패 — skip")
+            return
+
+        # 1) Questions seed — plain Korean, straight to pending_user
+        #    (skip the translator hop since orchestrator wrote these itself)
+        for q_text in (payload.get("questions") or [])[:3]:
+            q_text = str(q_text or "").strip()
+            if not q_text:
+                continue
+            qid = str(uuid.uuid4())[:8]
+            short = _next_short_q_id()
+            QUESTIONS.insert(0, {
+                "id": qid,
+                "short_id": short,
+                "agent": "orchestrator",
+                "raw": q_text,
+                "translated": q_text,
+                "status": "pending_user",
+                "created": now_iso(),
+                "source_req_id": rid,
+            })
+            log_event("orchestrator", "question", f"질문 생성 ({short}): {q_text[:60]}")
+
+        # 2) Report draft seed — orchestrator-authored, plain Korean.
+        summary = (payload.get("summary") or "").strip()
+        report_md = (payload.get("report_md") or "").strip() or f"# 요구사항 초안\n\n{summary or text[:200]}"
+        report = {
+            "id": str(uuid.uuid4())[:8],
+            "title": f"🎯 요구사항 초안 — {text[:40]}",
+            "author": "orchestrator",
+            "severity": "info",
+            "summary": summary or None,
+            "content_md": report_md,
+            "tags": payload.get("feature_tags") or [],
+            "source_req_id": rid,
+            "created": now_iso(),
+        }
+        REPORTS.insert(0, report)
+        log_event("orchestrator", "report", f"초안 리포트 발행: {report['title'][:60]}")
+
+        # 3) Tag the backlog item with feature tags for viewer grouping
+        tags = payload.get("feature_tags") or []
+        if tags:
+            for b in BACKLOG:
+                if b.get("source_req_id") == rid:
+                    b["feature_tags"] = tags
+                    break
+        _save_state()
+    except Exception as e:
+        log_event("orchestrator", "seed", f"초안 실패: {e}")
+    finally:
+        _set_state_safe("orchestrator", "idle")
+        log_event("orchestrator", "seed", "요구사항 초안 작업 종료")
+
+
+def _set_state_safe(name: str, state: str) -> None:
+    """In-process state flip + activity event. Safe when agent isn't in
+    the roster — we just log and skip."""
+    if name not in set(current_roster()):
+        return
+    prev = STATES.get(name, "idle")
+    if prev == state:
+        return
+    STATES[name] = state
+    log_event(name, "state", f"{prev} → {state}")
+    if state == "working":
+        _accrue_for_state_working(name)
+
+
+def _parse_seed_json(raw: str | None) -> dict | None:
+    """Pull the first JSON object out of the LLM response. Models often
+    wrap structured output in prose or markdown fences, so we substring
+    from the first ``{`` to the matching ``}`` before json.loads."""
+    if not raw:
+        return None
+    s = raw.strip()
+    # strip markdown fences
+    if s.startswith("```"):
+        s = s.split("```", 2)[-1].strip()
+        if s.lower().startswith("json"):
+            s = s[4:].lstrip()
+    start = s.find("{")
+    end = s.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        return json.loads(s[start:end + 1])
+    except Exception:
+        return None
 
 
 @app.post("/api/coordinate/{rid}/start")
@@ -1930,27 +2153,42 @@ def get_providers():
 
 
 class ProviderKeysIn(BaseModel):
-    anthropic: str | None = None
-    openai:    str | None = None
-    gemini:    str | None = None
-    bedrock:   bool | str | None = None
+    anthropic:   str | None = None
+    openai:      str | None = None
+    gemini:      str | None = None
+    elevenlabs:  str | None = None  # TTS/STT (voice-io 에이전트용)
+    falai:       str | None = None  # 영상/이미지 생성 (video-maker 에이전트용)
+    bedrock:     bool | str | None = None
+    # Bedrock easy-connect slots (Windows-friendly — no need to edit
+    # .env or run `setx` manually; these flow through PROVIDER_KEYS →
+    # os.environ → boto3).
+    aws_access_key_id:     str | None = None
+    aws_secret_access_key: str | None = None
+    aws_region:            str | None = None
 
 
 @app.get("/api/providers/keys")
 def get_provider_keys():
-    """Return masked view of configured keys. For anthropic/openai/gemini
+    """Return masked view of configured keys. For key-like slots
+    (anthropic/openai/gemini/aws_access_key_id/aws_secret_access_key)
     the response is ``"sk-…abcd"`` when set (from UI OR env) else null.
-    ``bedrock`` is a bool — CLAUDE_CODE_USE_BEDROCK=="1"."""
+    ``bedrock`` is a bool (``CLAUDE_CODE_USE_BEDROCK=="1"``); ``aws_region``
+    is returned in the clear (it's not a secret)."""
     def _resolved(slot: str) -> str:
         # UI-saved value wins; else whatever env already has (e.g. .env).
         envname = _PROVIDER_ENV_MAP[slot]
         return PROVIDER_KEYS.get(slot) or os.environ.get(envname) or ""
 
     return {
-        "anthropic": _mask_key(_resolved("anthropic")) or None,
-        "openai":    _mask_key(_resolved("openai"))    or None,
-        "gemini":    _mask_key(_resolved("gemini"))    or None,
-        "bedrock":   _resolved("bedrock") == "1",
+        "anthropic":             _mask_key(_resolved("anthropic"))  or None,
+        "openai":                _mask_key(_resolved("openai"))     or None,
+        "gemini":                _mask_key(_resolved("gemini"))     or None,
+        "elevenlabs":            _mask_key(_resolved("elevenlabs")) or None,
+        "falai":                 _mask_key(_resolved("falai"))      or None,
+        "bedrock":               _resolved("bedrock") == "1",
+        "aws_access_key_id":     _mask_key(_resolved("aws_access_key_id"))     or None,
+        "aws_secret_access_key": _mask_key(_resolved("aws_secret_access_key")) or None,
+        "aws_region":            _resolved("aws_region") or None,
         # Hint for the UI: which slots are locked by env (user cannot
         # clear them from UI — they'd need to unset the shell export).
         "env_locked": {
@@ -1959,6 +2197,82 @@ def get_provider_keys():
             for slot in _PROVIDER_ENV_MAP
         },
     }
+
+
+@app.post("/api/providers/bedrock/test")
+def test_bedrock_connection():
+    """One-click Bedrock connectivity check.
+
+    Runs a minimal ``converse`` call against the configured model and
+    reports back {ok, latency_ms, model, sample | error, hint}. Designed
+    for the ProviderKeysPanel "Test connection" button — surfaces the
+    usual AWS onboarding errors in plain Korean so the user doesn't have
+    to dig through boto3 tracebacks.
+    """
+    region = os.environ.get("AWS_REGION", "")
+    model = os.environ.get("ANTHROPIC_MODEL", "anthropic.claude-opus-4-7-v1:0")
+    if not region:
+        return {
+            "ok": False,
+            "error": "AWS_REGION 미설정",
+            "hint": "Provider 패널에서 Region 입력 (예: us-east-1, us-west-2, ap-northeast-2).",
+        }
+    if not os.environ.get("AWS_ACCESS_KEY_ID"):
+        return {
+            "ok": False,
+            "error": "AWS_ACCESS_KEY_ID 미설정",
+            "hint": "Provider 패널에서 AWS Access Key ID 입력.",
+        }
+    try:
+        import boto3
+        from botocore.exceptions import ClientError, NoCredentialsError
+    except ImportError:
+        return {
+            "ok": False,
+            "error": "boto3 미설치",
+            "hint": "`pip install boto3` 후 서버 재기동.",
+        }
+    t0 = time.time()
+    try:
+        client = boto3.client("bedrock-runtime", region_name=region)
+        resp = client.converse(
+            modelId=model,
+            messages=[{"role": "user", "content": [{"text": "ping"}]}],
+            inferenceConfig={"maxTokens": 32},
+        )
+        out = resp.get("output", {}).get("message", {})
+        parts = [c.get("text", "") for c in out.get("content", []) if c.get("text")]
+        sample = "\n".join(parts)[:120]
+        return {
+            "ok": True,
+            "latency_ms": int((time.time() - t0) * 1000),
+            "model": model,
+            "region": region,
+            "sample": sample,
+        }
+    except NoCredentialsError:
+        return {
+            "ok": False,
+            "error": "AWS 자격증명이 실제 boto3 에 전달되지 않음",
+            "hint": "Provider 패널에서 저장 후 서버가 값을 받았는지 확인. Windows 의 기존 AWS 프로파일과 충돌 가능성.",
+        }
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "Unknown")
+        msg = e.response.get("Error", {}).get("Message", str(e))
+        hints = {
+            "AccessDeniedException":  "IAM 정책에 `bedrock:InvokeModel` 권한 추가 필요. AWS 콘솔 → IAM → 해당 유저/역할 → Policies.",
+            "ValidationException":    f"모델 ID '{model}' 가 이 리전에서 활성화 안 됐을 수 있음. AWS 콘솔 → Bedrock → Model access 에서 Opus 4.7 요청/승인.",
+            "ResourceNotFoundException": f"모델 '{model}' 미존재. ANTHROPIC_MODEL 환경변수 확인 (예: anthropic.claude-opus-4-7-v1:0).",
+            "ThrottlingException":    "리전 quota 초과. 잠시 후 재시도 또는 quota 증설 요청.",
+            "UnrecognizedClientException": "Access Key / Secret 값이 잘못됨. 다시 입력.",
+        }
+        return {
+            "ok": False,
+            "error": f"{code}: {msg}",
+            "hint": hints.get(code, "AWS 콘솔에서 해당 에러 코드를 검색."),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e), "hint": "예상 못한 오류 — 로그 확인."}
 
 
 @app.post("/api/providers/keys")

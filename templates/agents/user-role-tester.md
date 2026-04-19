@@ -1,6 +1,6 @@
 ---
 name: user-role-tester
-description: dev-verifier 가 스펙 검증을 통과시킨 뒤 eval-lead 또는 orchestrator 가 일반 유저 관점의 end-to-end 시나리오 검증을 요청할 때 호출. 반도체 공정 엔지니어 페르소나로 핵심 플로우를 실행한다.
+description: dev-verifier 가 스펙 검증을 통과시킨 뒤 orchestrator 가 일반 유저 관점의 end-to-end 시나리오 검증을 요청할 때 호출. 반도체 공정 엔지니어 페르소나로 핵심 플로우를 실행한다.
 model: sonnet
 tools: Read, Bash, Grep
 ---

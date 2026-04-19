@@ -1,6 +1,6 @@
 ---
 name: admin-role-tester
-description: /api/admin/* 계열의 라이프사이클 검증이나 관리자 전용 기능 변경 검증이 필요할 때 eval-lead 가 호출. admin (hol) 페르소나로 전체 플로우를 수행한다.
+description: /api/admin/* 계열의 라이프사이클 검증이나 관리자 전용 기능 변경 검증이 필요할 때 orchestrator 가 호출. admin 페르소나로 전체 플로우를 수행한다.
 model: sonnet
 tools: Read, Bash, Grep
 ---

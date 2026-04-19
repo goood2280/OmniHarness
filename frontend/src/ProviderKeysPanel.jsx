@@ -3,17 +3,27 @@ import { t } from './i18n';
 
 // ProviderKeysPanel
 // ─────────────────
-// 플로팅 모달 카드. HUD 의 🔑 버튼으로 열린다.
-// 4개 슬롯: anthropic / openai / gemini / bedrock(toggle).
-// - GET /api/providers/keys   → masked "sk-…abcd" 또는 null; bedrock 은 bool.
-// - POST /api/providers/keys  → 빈 문자열이면 삭제, 값 있으면 저장.
-// Masked 값은 서버가 내려주므로 input placeholder 로만 표시.
-// 사용자가 새로 입력한 평문은 저장 시 POST 후 다시 reload → placeholder.
+// 플로팅 모달. HUD 의 🔑 버튼으로 열린다.
+// 슬롯:
+//   • anthropic / openai / gemini — 일반 API 키
+//   • bedrock — AWS Bedrock 토글 + 자격증명 3종 (access key / secret / region)
+//     추가로 [Test connection] 버튼으로 실제 bedrock-runtime.converse 핑.
+//
+// Windows-friendly: UI 에 값을 넣고 저장하면 OmniHarness 프로세스가 이미
+// PROVIDER_KEYS → os.environ 로 주입하므로 `setx` 나 .env 편집 없이도
+// 서버가 재시작될 때까지 유지. 영구 저장이 필요하면 Windows 명령어 가이드
+// (BedrockGuide) 를 따로 연다.
 export default function ProviderKeysPanel({ open, onClose, lang }) {
-  const [state, setState] = useState(null);  // masked resp
-  const [draft, setDraft] = useState({ anthropic: '', openai: '', gemini: '', bedrock: false });
+  const [state, setState] = useState(null);
+  const [draft, setDraft] = useState({
+    anthropic: '', openai: '', gemini: '', elevenlabs: '', falai: '',
+    bedrock: false,
+    aws_access_key_id: '', aws_secret_access_key: '', aws_region: '',
+  });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   const load = () => {
     fetch('/api/providers/keys')
@@ -21,7 +31,12 @@ export default function ProviderKeysPanel({ open, onClose, lang }) {
       .then((d) => {
         if (!d) return;
         setState(d);
-        setDraft({ anthropic: '', openai: '', gemini: '', bedrock: !!d.bedrock });
+        setDraft({
+          anthropic: '', openai: '', gemini: '',
+          bedrock: !!d.bedrock,
+          aws_access_key_id: '', aws_secret_access_key: '',
+          aws_region: d.aws_region || '',
+        });
       })
       .catch(() => {});
   };
@@ -33,16 +48,16 @@ export default function ProviderKeysPanel({ open, onClose, lang }) {
   const save = async () => {
     setSaving(true); setMsg(null);
     try {
-      // Only send fields the user actually touched (non-empty draft for
-      // text slots, or the bedrock toggle always). Empty-but-touched
-      // clears the slot; we track "touched" via a simple heuristic:
-      // if the draft string is non-empty we send it, else we don't.
       const payload = {};
-      if (draft.anthropic !== '') payload.anthropic = draft.anthropic;
-      if (draft.openai    !== '') payload.openai    = draft.openai;
-      if (draft.gemini    !== '') payload.gemini    = draft.gemini;
-      // Bedrock toggle: always send (it's a bool, no masked equivalent).
+      if (draft.anthropic  !== '') payload.anthropic  = draft.anthropic;
+      if (draft.openai     !== '') payload.openai     = draft.openai;
+      if (draft.gemini     !== '') payload.gemini     = draft.gemini;
+      if (draft.elevenlabs !== '') payload.elevenlabs = draft.elevenlabs;
+      if (draft.falai      !== '') payload.falai      = draft.falai;
       payload.bedrock = !!draft.bedrock;
+      if (draft.aws_access_key_id     !== '') payload.aws_access_key_id     = draft.aws_access_key_id;
+      if (draft.aws_secret_access_key !== '') payload.aws_secret_access_key = draft.aws_secret_access_key;
+      if (draft.aws_region            !== '') payload.aws_region            = draft.aws_region;
       const r = await fetch('/api/providers/keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -51,7 +66,12 @@ export default function ProviderKeysPanel({ open, onClose, lang }) {
       if (!r.ok) throw new Error('save failed');
       const d = await r.json();
       setState(d);
-      setDraft({ anthropic: '', openai: '', gemini: '', bedrock: !!d.bedrock });
+      setDraft({
+        anthropic: '', openai: '', gemini: '',
+        bedrock: !!d.bedrock,
+        aws_access_key_id: '', aws_secret_access_key: '',
+        aws_region: d.aws_region || '',
+      });
       setMsg({ ok: true, text: t('keys.saved', lang) });
     } catch (e) {
       setMsg({ ok: false, text: String(e) });
@@ -61,19 +81,18 @@ export default function ProviderKeysPanel({ open, onClose, lang }) {
   };
 
   const clearSlot = async (slot) => {
-    // Explicit clear — send empty string to drop both PROVIDER_KEYS and
-    // os.environ. Server returns fresh masked view.
     setSaving(true); setMsg(null);
     try {
+      const empty = slot === 'bedrock' ? false : '';
       const r = await fetch('/api/providers/keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [slot]: slot === 'bedrock' ? false : '' }),
+        body: JSON.stringify({ [slot]: empty }),
       });
       if (!r.ok) throw new Error('clear failed');
       const d = await r.json();
       setState(d);
-      setDraft((x) => ({ ...x, [slot]: slot === 'bedrock' ? false : '' }));
+      setDraft((x) => ({ ...x, [slot]: empty }));
       setMsg({ ok: true, text: t('keys.cleared', lang) });
     } catch (e) {
       setMsg({ ok: false, text: String(e) });
@@ -82,8 +101,21 @@ export default function ProviderKeysPanel({ open, onClose, lang }) {
     }
   };
 
+  const testBedrock = async () => {
+    setTesting(true); setTestResult(null);
+    try {
+      const r = await fetch('/api/providers/bedrock/test', { method: 'POST' });
+      const d = await r.json();
+      setTestResult(d);
+    } catch (e) {
+      setTestResult({ ok: false, error: String(e), hint: '네트워크/서버 연결 확인.' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const slotRow = (slot, label) => {
-    const masked = state && state[slot];        // "sk-…abcd" or null
+    const masked = state && state[slot];
     const locked = !!(state && state.env_locked && state.env_locked[slot]);
     return (
       <label className="keys-row" key={slot}>
@@ -123,21 +155,94 @@ export default function ProviderKeysPanel({ open, onClose, lang }) {
           <p className="muted" style={{ marginBottom: 8 }}>
             {t('keys.hint', lang)}
           </p>
-          {slotRow('anthropic', 'ANTHROPIC_API_KEY')}
-          {slotRow('openai',    'OPENAI_API_KEY')}
-          {slotRow('gemini',    'GEMINI_API_KEY')}
-          <label className="keys-row keys-row--toggle">
-            <span className="keys-label">
-              CLAUDE_CODE_USE_BEDROCK
-              {state?.env_locked?.bedrock && <em className="keys-locked"> · env</em>}
-            </span>
-            <input
-              type="checkbox"
-              checked={!!draft.bedrock}
-              onChange={(e) => setDraft((x) => ({ ...x, bedrock: e.target.checked }))}
-              data-testid="provider-key-bedrock"
-            />
-          </label>
+
+          {slotRow('anthropic',  'ANTHROPIC_API_KEY')}
+          {slotRow('openai',     'OPENAI_API_KEY')}
+          {slotRow('gemini',     'GEMINI_API_KEY')}
+          {slotRow('elevenlabs', 'ELEVENLABS_API_KEY')}
+          {slotRow('falai',      'FAL_KEY')}
+
+          {/* ── Bedrock (AWS) — easy-connect 섹션 ─────────────────── */}
+          <div className="keys-bedrock-section" style={{
+            marginTop: 16, paddingTop: 12, borderTop: '1px solid #333',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <strong style={{ fontSize: 12, letterSpacing: '0.04em' }}>
+                {lang === 'ko' ? '🟠 AMAZON BEDROCK (AWS)' : '🟠 AMAZON BEDROCK (AWS)'}
+              </strong>
+              <label className="keys-row keys-row--toggle" style={{ margin: 0 }}>
+                <span className="keys-label" style={{ marginRight: 8 }}>
+                  {lang === 'ko' ? 'Bedrock 사용' : 'Use Bedrock'}
+                  {state?.env_locked?.bedrock && <em className="keys-locked"> · env</em>}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={!!draft.bedrock}
+                  onChange={(e) => setDraft((x) => ({ ...x, bedrock: e.target.checked }))}
+                  data-testid="provider-key-bedrock"
+                />
+              </label>
+            </div>
+
+            {slotRow('aws_access_key_id',     'AWS_ACCESS_KEY_ID')}
+            {slotRow('aws_secret_access_key', 'AWS_SECRET_ACCESS_KEY')}
+
+            {/* Region 은 비밀이 아니므로 평문 노출 */}
+            <label className="keys-row" key="aws_region">
+              <span className="keys-label">
+                AWS_REGION
+                {state?.env_locked?.aws_region && <em className="keys-locked"> · env</em>}
+              </span>
+              <div className="keys-input-wrap">
+                <input
+                  type="text"
+                  autoComplete="off"
+                  value={draft.aws_region}
+                  placeholder={lang === 'ko' ? '예: us-east-1, us-west-2, ap-northeast-2' : 'e.g. us-east-1, us-west-2, ap-northeast-2'}
+                  onChange={(e) => setDraft((x) => ({ ...x, aws_region: e.target.value }))}
+                  data-testid="provider-key-aws_region"
+                />
+              </div>
+            </label>
+
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={testBedrock}
+                disabled={testing || saving}
+                data-testid="provider-keys-test-bedrock"
+              >
+                {testing
+                  ? (lang === 'ko' ? '테스트 중…' : 'Testing…')
+                  : (lang === 'ko' ? '🔌 연결 테스트' : '🔌 Test connection')}
+              </button>
+              {testResult && (
+                <span
+                  className={'keys-msg ' + (testResult.ok ? 'ok' : 'err')}
+                  style={{ flex: 1, fontSize: 11, lineHeight: 1.4 }}
+                >
+                  {testResult.ok
+                    ? (lang === 'ko'
+                        ? `✅ 연결 성공 · ${testResult.latency_ms}ms · ${testResult.model}`
+                        : `✅ Connected · ${testResult.latency_ms}ms · ${testResult.model}`)
+                    : (
+                      <>
+                        ❌ {testResult.error}
+                        {testResult.hint && <div style={{ opacity: 0.75, marginTop: 2 }}>💡 {testResult.hint}</div>}
+                      </>
+                    )}
+                </span>
+              )}
+            </div>
+
+            <p className="muted" style={{ fontSize: 10, marginTop: 8, lineHeight: 1.5 }}>
+              {lang === 'ko'
+                ? '💡 Windows 에서는 여기 입력만 하면 OmniHarness 프로세스가 살아있는 동안 유지됩니다. 시스템 전체 영구 저장은 HUD ☁ GUIDE 의 Bedrock 섹션 명령어 참고.'
+                : '💡 On Windows, just entering values here keeps them for the life of the OmniHarness process. For system-wide persistence see the Bedrock section in the HUD ☁ GUIDE.'}
+            </p>
+          </div>
+
           {msg && (
             <div className={'keys-msg ' + (msg.ok ? 'ok' : 'err')}>{msg.text}</div>
           )}

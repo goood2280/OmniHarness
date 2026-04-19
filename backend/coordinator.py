@@ -96,40 +96,34 @@ def _match(text: str, kws: list[str]) -> bool:
     return any(k in t for k in kws)
 
 
-def _pick_ui_devs(text: str, roster: set[str]) -> list[str]:
-    """Pick the most specifically-matching dev-* agents for a UI task."""
+def _pick_feature_tags(text: str) -> list[str]:
+    """Detect FabCanvas feature tags from the requirement text.
+
+    After the 2026-04-19 slim, there are no dev-* fan-out agents any more —
+    dev-lead is a single full-stack worker. We only keep the keyword → tag
+    mapping so the activity-log renderer can badge dev-lead's work with
+    which feature(s) it touched (dashboard / spc / ml / …). Order is most-
+    specific first, and a single requirement can legitimately hit multiple
+    tags.
+    """
     t = (text or "").lower()
-    picks: list[str] = []
-    # Keyword → dev agent mapping. Order matters: more specific first.
     table = [
-        (["dashboard", "대시보드"],               "dev-dashboard"),
-        (["table", "테이블"],                     "dev-tablemap"),
-        (["admin", "관리자", "브랜드"],           "dev-admin"),
-        (["spc", "관리도"],                       "dev-spc"),
-        (["wafer", "웨이퍼", "wafer-map"],         "dev-wafer-map"),
-        (["ettime", "eng-time"],                  "dev-ettime"),
-        (["tracker", "추적"],                     "dev-tracker"),
-        (["file", "browser", "파일"],             "dev-filebrowser"),
-        (["messages", "메시지", "알림"],          "dev-messages"),
-        (["ml"],                                  "dev-ml"),
+        (["dashboard", "대시보드"],       "dashboard"),
+        (["table", "테이블"],             "tablemap"),
+        (["admin", "관리자", "브랜드"],   "admin"),
+        (["spc", "관리도"],               "spc"),
+        (["wafer", "웨이퍼"],              "wafer-map"),
+        (["ettime", "eng-time"],          "ettime"),
+        (["tracker", "추적"],             "tracker"),
+        (["file", "browser", "파일"],     "filebrowser"),
+        (["messages", "메시지", "알림"],  "messages"),
+        (["ml"],                          "ml"),
     ]
-    for kws, name in table:
-        if name in roster and any(k in t for k in kws):
-            picks.append(name)
-    # Fallback to dashboard if nothing matched but we're still in UI bucket.
-    if not picks and "dev-dashboard" in roster:
-        picks.append("dev-dashboard")
-    # Dedup preserving order. 사용자 가이드: "최대 10개 정도 병렬 OK".
-    # 독립 기능 작업 + 리뷰 단계는 최대한 병렬로 돌려야 빠름.
-    seen = set()
-    out: list[str] = []
-    for n in picks:
-        if n not in seen:
-            seen.add(n)
-            out.append(n)
-        if len(out) >= 10:
-            break
-    return out
+    tags: list[str] = []
+    for kws, tag in table:
+        if any(k in t for k in kws) and tag not in tags:
+            tags.append(tag)
+    return tags
 
 
 def _in_roster(name: str, roster: set[str]) -> bool:
@@ -139,91 +133,68 @@ def _in_roster(name: str, roster: set[str]) -> bool:
 def plan(requirement: dict, roster: list[str]) -> list[Step]:
     """Build a linear Step sequence from the requirement text.
 
-    The classification is deliberately crude — a handful of keyword
-    buckets cover the typical fab-facing workloads. Anything that
-    doesn't match falls back to the generic orchestrator → dev-lead →
-    dev-dashboard → eval-lead → reporter pipeline.
+    Post-2026-04-19 slim: the roster is 8 agents (orchestrator + dev-lead
+    + 6 reviewers). Domain-rules live under `projects/<proj>/knowledge/`
+    and are not agents, so they don't appear in the wave. We still pick
+    feature tags from the text (dashboard / spc / ml / …) so dev-lead's
+    activity detail badges which FabCanvas feature the work touched.
     """
     text = str(requirement.get("text") or "")
     rset = set(roster)
     steps: list[Step] = []
 
-    # 감사 수락 (2026-04-19, proposal c28443b1) 에 따른 orchestrator 압축:
-    # 기존 start(2s) + work(2.5s) 2-step → 단일 start(1.0s) 라우터 역할만.
-    # "계획 수립 및 팀 배정" 문구는 detail 로 남기고 내부 실행은 dispatch-only.
-    # 긴 숙고 단계 책임은 dev-lead 로 위임. orchestrator.done 은 plan 끝에서 처리.
+    tags = _pick_feature_tags(text)
+    tag_str = "+".join(tags) if tags else "일반"
+
+    # orchestrator dispatch (router only — heavy deliberation happens in
+    # dev-lead, reviewers react afterwards).
     steps.append(Step("orchestrator", "start",
-                      f"요구사항 수신 · 팀 배정: {text[:50]}", 1.0))
+                      f"요구사항 수신 · dev-lead 배정 [{tag_str}]: {text[:50]}", 1.0))
 
-    # 감사 수락에 따라 dev wave 와 review wave 를 같은 group 으로 묶어
-    # 동시 발사. dev 가 구현하는 동안 review 진영 (eval-lead/reporter/
-    # dev-verifier/security-auditor/user-role-tester/admin-role-tester) 가
-    # warm-up 하며 병렬 working 으로 점등됨.
-    active_group = 5  # 모든 브랜치가 이 group 공유 → dev+review 한 wave
-    # Route by keyword bucket.
+    # dev wave and review wave share one group so they fire in parallel
+    # — dev-lead implements while reviewers warm up and run checks.
+    active_group = 5
+
+    # Route by bucket, but we always end up calling dev-lead (no fan-out).
     if _match(text, _KW_DOMAIN):
-        steps.append(Step("dev-lead", "start", "도메인 변경 요구사항 접수", 1.5, group=active_group))
-        for cand in ("process-tagger", "causal-analyst"):
-            if _in_roster(cand, rset):
-                steps.append(Step(cand, "start", f"{cand} 분석 시작", 1.5, group=active_group))
-                steps.append(Step(cand, "work", f"{cand} 분석 진행", 2.5, group=active_group))
-                steps.append(Step(cand, "done", f"{cand} 분석 완료", 0.5, group=active_group))
-        steps.append(Step("dev-lead", "done", "도메인 분석 리뷰 완료", 0.5, group=active_group))
-
+        work_detail = f"도메인 판단 — knowledge md 참조 ({tag_str})"
     elif _match(text, _KW_ML):
-        steps.append(Step("dev-lead", "start", "ML 파이프라인 검토", 1.5, group=active_group))
-        if _in_roster("dev-ml", rset):
-            steps.append(Step("dev-ml", "start", "모델 작업 시작", 1.5, group=active_group))
-            steps.append(Step("dev-ml", "work", "학습/추론 구현", 3.0, group=active_group))
-            steps.append(Step("dev-ml", "done", "모델 작업 완료", 0.5, group=active_group))
-        steps.append(Step("dev-lead", "done", "ML 결과 리뷰", 0.5, group=active_group))
-
+        work_detail = f"ML 파이프라인 구현 ({tag_str})"
     elif _match(text, _KW_API):
-        picks = _pick_ui_devs(text, rset)
-        steps.append(Step("dev-lead", "start", "API/백엔드 변경 분석", 1.5, group=active_group))
-        for dev in picks:
-            steps.append(Step(dev, "start", f"{dev} 라우터/스키마 작업", 1.5, group=active_group))
-            steps.append(Step(dev, "work", f"{dev} 구현/테스트", 2.5, group=active_group))
-            steps.append(Step(dev, "done", f"{dev} 작업 완료", 0.5, group=active_group))
-        steps.append(Step("dev-lead", "done", "백엔드 변경 리뷰", 0.5, group=active_group))
-
+        work_detail = f"백엔드 라우터/스키마 변경 ({tag_str})"
     elif _match(text, _KW_UI):
-        picks = _pick_ui_devs(text, rset)
-        steps.append(Step("dev-lead", "start", "UI 개선 작업 분배", 1.5, group=active_group))
-        for dev in picks:
-            steps.append(Step(dev, "start", f"{dev} 화면 수정", 1.5, group=active_group))
-            steps.append(Step(dev, "work", f"{dev} 레이아웃/스타일 적용", 2.5, group=active_group))
-            steps.append(Step(dev, "done", f"{dev} 작업 완료", 0.5, group=active_group))
-        if _in_roster("ux-reviewer", rset):
-            steps.append(Step("ux-reviewer", "start", "UX 리뷰 시작", 1.5, group=active_group))
-            steps.append(Step("ux-reviewer", "work", "가시성/일관성 점검", 2.0, group=active_group))
-            steps.append(Step("ux-reviewer", "done", "UX 리뷰 완료", 0.5, group=active_group))
-        steps.append(Step("dev-lead", "done", "UI 작업 리뷰", 0.5, group=active_group))
-
+        work_detail = f"프론트엔드 화면/스타일 변경 ({tag_str})"
     else:
-        steps.append(Step("dev-lead", "start", "작업 검토", 1.5, group=active_group))
-        if _in_roster("dev-dashboard", rset):
-            steps.append(Step("dev-dashboard", "start", "구현 시작", 1.5, group=active_group))
-            steps.append(Step("dev-dashboard", "work", "구현 진행", 2.5, group=active_group))
-            steps.append(Step("dev-dashboard", "done", "구현 완료", 0.5, group=active_group))
-        steps.append(Step("dev-lead", "done", "결과 리뷰", 0.5, group=active_group))
+        work_detail = f"요구사항 구현 ({tag_str})"
 
-    # 리뷰 wave — 같은 group=5 로 붙여 dev wave 와 함께 시작/진행/종료.
-    # 감사 수락 c28443b1 반영: orchestrator 압축 + dev↔review 병렬화.
-    review_group = active_group
-    for reviewer, detail_w, detail_d in [
-        ("eval-lead",         "테스트/검증 실행",              "평가 완료"),
-        ("reporter",          "사용자용 요약 작성",            "보고서 제출"),
-        ("dev-verifier",      "회귀/빌드 검증",                "검증 완료"),
-        ("security-auditor",  "보안/권한 점검",                "보안 점검 완료"),
-        ("user-role-tester",  "유저 관점 사용성 검증",         "사용성 검증 완료"),
-        ("admin-role-tester", "관리자 관점 권한/기능 검증",    "관리자 검증 완료"),
-    ]:
+    if _in_roster("dev-lead", rset):
+        steps.append(Step("dev-lead", "start", f"작업 착수 [{tag_str}]", 1.5, group=active_group))
+        steps.append(Step("dev-lead", "work",  work_detail,                3.0, group=active_group))
+        steps.append(Step("dev-lead", "done",  f"구현 완료 [{tag_str}]",  0.5, group=active_group))
+
+    # Reviewer wave — orchestrator picks which reviewers fire based on
+    # bucket. ux-reviewer for UI, security-auditor for API/admin, etc.
+    # All fire in the same group for parallel lighting.
+    review_pool: list[tuple[str, str, str]] = []
+    if _match(text, _KW_UI):
+        review_pool.append(("ux-reviewer", "가시성/일관성/정보 위계 점검", "UX 리뷰 완료"))
+    if _match(text, _KW_API) or "admin" in tags:
+        review_pool.append(("security-auditor", "권한/경로/의존성 감사", "보안 점검 완료"))
+    review_pool.append(("dev-verifier", "스펙 대비 빌드/엔드포인트 검증", "검증 완료"))
+    if any(t in tags for t in ("admin",)):
+        review_pool.append(("admin-role-tester", "관리자 라이프사이클 시나리오", "관리자 검증 완료"))
+    else:
+        review_pool.append(("user-role-tester", "유저 시나리오 실행", "사용성 검증 완료"))
+    if _match(text, _KW_DOMAIN):
+        review_pool.append(("domain-researcher", "업계/학계 자료 조사", "조사 완료"))
+
+    for reviewer, detail_w, detail_d in review_pool:
         if _in_roster(reviewer, rset):
-            steps.append(Step(reviewer, "start", f"{reviewer} 시작", 1.5, group=review_group))
-            steps.append(Step(reviewer, "work",  detail_w,            2.0, group=review_group))
-            steps.append(Step(reviewer, "done",  detail_d,            0.5, group=review_group))
-    steps.append(Step("orchestrator", "done", "요구사항 완료", 0.5))
+            steps.append(Step(reviewer, "start", f"{reviewer} 시작", 1.5, group=active_group))
+            steps.append(Step(reviewer, "work",  detail_w,            2.0, group=active_group))
+            steps.append(Step(reviewer, "done",  detail_d,            0.5, group=active_group))
+
+    steps.append(Step("orchestrator", "done", f"요구사항 완료 [{tag_str}]", 0.5))
     return steps
 
 

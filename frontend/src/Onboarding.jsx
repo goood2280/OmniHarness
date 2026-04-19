@@ -9,14 +9,10 @@ import { useEffect, useState } from 'react';
 import { t } from './i18n';
 
 const BASE_TEAM = [
-  { name: 'orchestrator', team: 'top',   note_ko: '총괄. 사용자 요청을 분배하고 3명의 리드를 감독.',
-                                          note_en: 'HQ. Splits user requests across the 3 leads.' },
-  { name: 'dev-lead',     team: 'leads', note_ko: '개발팀 리드. 기능 단위 개발 담당자 조율.',
-                                          note_en: 'Dev Lead. Coordinates feature engineers.' },
-  { name: 'mgmt-lead',    team: 'leads', note_ko: '경영지원 리드. 사용자↔에이전트 언어 번역.',
-                                          note_en: 'Mgmt Lead. Translates between user and agents both ways.' },
-  { name: 'eval-lead',    team: 'leads', note_ko: '평가팀 리드. UX/검증/보안/업계 리서치 파이프라인.',
-                                          note_en: 'Eval Lead. Runs the UX/verify/security/industry-research pipeline.' },
+  { name: 'orchestrator', team: 'top', note_ko: '총괄. 사용자와 직접 대화하고 구현은 dev-lead, 검증은 리뷰어에게 위임.',
+                                        note_en: 'HQ. Talks to the user directly; delegates implementation to dev-lead and review to the reviewers.' },
+  { name: 'dev-lead',     team: 'dev', note_ko: '개발 실무. 피처 세분화 없이 풀스택 단일 에이전트.',
+                                        note_en: 'Dev. Single full-stack worker — no per-feature fan-out.' },
 ];
 
 export default function Onboarding({ mission, onSave, lang, onClose }) {
@@ -211,12 +207,12 @@ export default function Onboarding({ mission, onSave, lang, onClose }) {
                 </div>
               ))}
               <div className="wizard-chip wizard-chip-base">
-                <span className="wizard-chip-name">+ reporter · hr</span>
-                <span className="wizard-chip-note">{lang === 'ko' ? '경영지원팀 (요약 보고 + 조직 건전성)' : 'Mgmt support (summaries + org health)'}</span>
+                <span className="wizard-chip-name">+ 6 · {L('wiz.eval_team')}</span>
+                <span className="wizard-chip-note">{lang === 'ko' ? 'UX · 검증 · 유저/관리자 테스터 · 보안 · 도메인 리서치 (on-demand)' : 'UX · verify · user/admin tester · security · domain research (on-demand)'}</span>
               </div>
               <div className="wizard-chip wizard-chip-base">
-                <span className="wizard-chip-name">+ 6 · {L('wiz.eval_team')}</span>
-                <span className="wizard-chip-note">{lang === 'ko' ? 'UX · 검증 · 유저/관리자 테스터 · 보안 · 도메인 리서치' : 'UX · verify · user/admin tester · security · domain research'}</span>
+                <span className="wizard-chip-name">📚 knowledge × 4</span>
+                <span className="wizard-chip-note">{lang === 'ko' ? '공정 영역 · 인과 방향 · DVC 방향 · 어댑터 매핑 (에이전트가 아닌 참조 문서)' : 'process area · causal · DVC · adapter — reference docs, not agents'}</span>
               </div>
             </div>
 
@@ -307,8 +303,8 @@ export default function Onboarding({ mission, onSave, lang, onClose }) {
               <div className="wizard-summary-row">
                 <span className="wizard-summary-key">{L('wiz.roster_total')}</span>
                 <span className="wizard-summary-val">
-                  {BASE_TEAM.length + 2 /* reporter+hr */ + 6 /* eval */ + devSel.length + domainSel.length}
-                  <span className="wizard-summary-sub"> ({L('wiz.base_count')} {BASE_TEAM.length + 2 + 6} + dev {devSel.length} + domain {domainSel.length})</span>
+                  {BASE_TEAM.length + 6 /* reviewers */ + devSel.length + domainSel.length}
+                  <span className="wizard-summary-sub"> ({L('wiz.base_count')} {BASE_TEAM.length + 6} + dev {devSel.length} + domain {domainSel.length})</span>
                 </span>
               </div>
             </div>

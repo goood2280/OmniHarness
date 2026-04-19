@@ -1,12 +1,12 @@
 // Questions.jsx — bidirectional translation pipeline visible to the user.
 //
 //   Agent raw (technical)
-//      → mgmt-lead translates for user ("pending_user")
+//      → orchestrator rewrites it in plain Korean ("pending_user")
 //      → user answers freely ("pending_answer_translation")
-//      → mgmt-lead restates for the agent ("answered")
+//      → orchestrator restates it back for the agent ("answered")
 //
-// The user only has to write in plain language — mgmt-lead handles both
-// directions of translation.
+// After the 2026-04-19 slim, the mgmt-lead translator agent is gone —
+// the orchestrator writes both sides of the translation directly.
 
 import { useState } from 'react';
 import { t } from './i18n';
@@ -75,10 +75,10 @@ function QuestionCard({ q, onReload, lang }) {
         <span className="q-time">{(q.created || '').slice(11, 19)}</span>
       </div>
 
-      {/* mgmt-lead's user-facing translation */}
+      {/* orchestrator's user-facing rewrite */}
       {q.translated ? (
         <div className="q-translated">
-          <span className="q-arrow q-arrow-in">mgmt-lead →</span>
+          <span className="q-arrow q-arrow-in">orchestrator →</span>
           {q.translated}
         </div>
       ) : (
@@ -118,7 +118,7 @@ function QuestionCard({ q, onReload, lang }) {
 
       {q.answer_structured && (
         <div className="q-structured">
-          <span className="q-arrow q-arrow-out">mgmt-lead → {q.agent}:</span>
+          <span className="q-arrow q-arrow-out">orchestrator → {q.agent}:</span>
           {q.answer_structured}
         </div>
       )}

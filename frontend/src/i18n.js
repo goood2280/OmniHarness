@@ -120,14 +120,14 @@ export const TRANSLATIONS = {
   // Questions
   'q.empty_title':  { ko: '대기 중인 질문이 없습니다.', en: 'No questions waiting.' },
   'q.empty_body':   {
-    ko: '에이전트가 모호한 결정을 만나면 경영지원 리드가 이해하기 쉬운 언어로 풀어서 여기에 질문이 올라오고, 당신 답변도 리드가 적절하게 변환해 에이전트에게 전달합니다.',
-    en: 'When an agent hits an ambiguous decision, mgmt-lead translates it into friendly language here. Your answer also gets translated back into structured input for the agent.',
+    ko: '에이전트가 모호한 결정을 만나면 오케스트레이터가 이해하기 쉬운 언어로 풀어서 여기에 질문이 올라오고, 당신 답변도 오케스트레이터가 적절히 변환해 에이전트에게 전달합니다.',
+    en: 'When an agent hits an ambiguous decision, the orchestrator rewrites it in friendly language here. Your answer gets translated back into structured input for the agent.',
   },
-  'q.status_pending_translation': { ko: '🔄 경영지원 리드가 질문을 풀어 쓰는 중', en: '🔄 mgmt-lead is translating' },
+  'q.status_pending_translation': { ko: '🔄 오케스트레이터가 질문을 풀어 쓰는 중', en: '🔄 orchestrator is rewriting' },
   'q.status_pending_user':        { ko: '💬 당신의 답변이 필요합니다', en: '💬 your answer is needed' },
-  'q.status_pending_answer_translation': { ko: '🔁 경영지원 리드가 답변을 에이전트 언어로 변환 중', en: '🔁 mgmt-lead is restating your answer for the agent' },
+  'q.status_pending_answer_translation': { ko: '🔁 오케스트레이터가 답변을 에이전트 언어로 변환 중', en: '🔁 orchestrator is restating your answer for the agent' },
   'q.status_answered':            { ko: '✅ 답변 전달 완료', en: '✅ delivered to agent' },
-  'q.translating': { ko: '경영지원 리드가 번역 중입니다…', en: 'mgmt-lead is translating…' },
+  'q.translating': { ko: '오케스트레이터가 풀어 쓰는 중…', en: 'orchestrator is rewriting…' },
   'q.raw_summary': { ko: '원문 (에이전트가 쓴 기술적 설명)', en: 'Raw (technical wording from the agent)' },
   'q.answer_ph':   {
     ko: '답변을 적으세요. 간단해도 됩니다. (예: A, 또는 "기본값 7일로 가시죠")',
@@ -153,8 +153,8 @@ export const TRANSLATIONS = {
   // Reports
   'rep.empty_title': { ko: '발행된 보고서가 없습니다.', en: 'No reports yet.' },
   'rep.empty_body':  {
-    ko: '의미있는 변경점이 모이면 보고원이 자동으로 한국어 요약 보고서를 발행합니다.',
-    en: 'When meaningful changes accumulate, reporter publishes a polished summary automatically.',
+    ko: '의미있는 변경점이 모이면 오케스트레이터가 자동으로 평어체 요약 보고서를 발행합니다. 요구사항을 올리면 초안 리포트도 여기에 먼저 뜹니다.',
+    en: 'When meaningful changes accumulate, the orchestrator publishes a plain-language summary. New requirements land a draft report here first.',
   },
   'rep.select_hint': { ko: '왼쪽에서 보고서를 선택하세요.', en: 'Pick a report on the left.' },
 
@@ -232,14 +232,17 @@ export const TRANSLATIONS = {
   'audit.origin_badge': { ko: '🔎 감사', en: '🔎 audit' },
   'audit.hud_chip': { ko: '🔎 감사', en: '🔎 audit' },
 
-  // Legend (team labels)
-  'team.top':      { ko: '총괄 (HQ)',      en: 'HQ' },
-  'team.leads':    { ko: '팀 리드',         en: 'Team Leads' },
-  'team.dev':      { ko: '개발팀',          en: 'Dev Team' },
-  'team.domain':   { ko: '도메인 전문',     en: 'Domain Specialists' },
-  'team.mgmt':     { ko: '경영지원팀',      en: 'Management Support' },
-  'team.eval':     { ko: '평가팀',          en: 'Evaluation' },
-  'team.canteen':  { ko: '탕비실 · 도구', en: 'Canteen · Tools' },
+  // Legend (team labels). Post-slim the active teams are top / dev /
+  // eval only; leads / mgmt / domain kept for backcompat but typically
+  // won't render (backend filters empty rooms out of /api/topology).
+  'team.top':        { ko: '총괄 (HQ)',    en: 'HQ' },
+  'team.leads':      { ko: '팀 리드',       en: 'Team Leads' },
+  'team.dev':        { ko: '개발',          en: 'Dev' },
+  'team.domain':     { ko: '도메인 전문',   en: 'Domain Specialists' },
+  'team.mgmt':       { ko: '경영지원팀',    en: 'Management Support' },
+  'team.eval':       { ko: '리뷰어',        en: 'Reviewers' },
+  'team.knowledge':  { ko: '지식 자료',     en: 'Knowledge' },
+  'team.canteen':    { ko: '탕비실 · 도구', en: 'Canteen · Tools' },
 
   // AgentPanel
   'panel.click_hint':    { ko: '캐릭터를 클릭하면 정보가 여기 표시됩니다.', en: 'Click a character to see its info here.' },

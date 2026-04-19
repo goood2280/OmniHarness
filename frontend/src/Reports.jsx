@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { t } from './i18n';
 
-// Minimal markdown-ish renderer for reporter-emitted content.
+// Minimal markdown-ish renderer for orchestrator-authored report bodies.
+// After the 2026-04-19 slim, the separate reporter agent is gone and
+// the orchestrator writes these summaries itself.
 function renderMd(md) {
   if (!md) return null;
   const lines = md.split(/\r?\n/);

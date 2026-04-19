@@ -1,6 +1,6 @@
 ---
 name: domain-researcher
-description: 반도체 fab (특히 dev 단계) 도메인 심화 조사가 필요할 때 eval-lead 또는 orchestrator 가 호출. 공개 학계/업계 자료 기반으로 경쟁 제품 및 공정 동향을 정리한다.
+description: 반도체 fab (특히 dev 단계) 도메인 심화 조사가 필요할 때 orchestrator 가 호출. 공개 학계/업계 자료 기반으로 경쟁 제품 및 공정 동향을 정리한다.
 model: sonnet
 tools: Read, Write, Grep, Glob, WebSearch, WebFetch
 ---

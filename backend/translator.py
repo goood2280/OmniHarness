@@ -26,38 +26,20 @@ import re
 _log = logging.getLogger("omniharness.translator")
 
 
-# ── 에이전트 역할 문맥 ──────────────────────────────────────────────
-# 도메인 전문가가 "왜 이 결정이 필요한지" 한눈에 알 수 있게. mgmt-lead
-# 가 대신 물어주는 톤. LLM 모드에서도 힌트로 주입한다.
+# ── 에이전트 역할 문맥 (slimmed 2026-04-19) ─────────────────────────
+# 극장 레이어 제거 — dev-* 10개 / 도메인 4개 / mgmt-lead / reporter /
+# hr / eval-lead 모두 orchestrator + dev-lead + reviewer 6 에 흡수.
+# 이 dict 는 orchestrator 가 유저에게 질문을 **평어체로 직접** 쓸 때
+# "누구 입장에서의 질문인지" 한 줄 힌트만 제공.
 _AGENT_ROLE_KO: dict[str, str] = {
-    "orchestrator":      "오케스트레이터가 팀 구성/흐름을",
-    "dev-lead":          "개발 총괄이 기술 스택/구조를",
-    "mgmt-lead":         "관리 총괄이 운영 방침을",
-    "eval-lead":         "평가 총괄이 검수 기준을",
-    "reporter":          "리포터가 보고 범위를",
-    "hr":                "HR 이 팀/역할 편성을",
+    "orchestrator":      "오케스트레이터가 흐름/전체 구조를",
+    "dev-lead":          "개발자가 구현 방식을",
     "ux-reviewer":       "UX 리뷰어가 사용자 흐름을",
     "dev-verifier":      "개발 검증자가 빌드/런타임 검증 범위를",
-    "user-role-tester":  "일반 사용자 롤 테스터가 시나리오를",
+    "user-role-tester":  "유저 롤 테스터가 시나리오를",
     "admin-role-tester": "관리자 롤 테스터가 시나리오를",
     "security-auditor":  "보안 감사자가 위협 범위를",
     "domain-researcher": "도메인 리서처가 조사 범위를",
-
-    "dev-dashboard":     "대시보드 개발자가 지표/레이아웃을",
-    "dev-spc":           "SPC 개발자가 관리도 규칙을",
-    "dev-wafer-map":     "웨이퍼맵 개발자가 맵 표현 방식을",
-    "dev-ml":            "ML 개발자가 모델/피처 선택을",
-    "dev-ettime":        "ETtime 개발자가 시계열 해석을",
-    "dev-tablemap":      "테이블맵 개발자가 매핑 규칙을",
-    "dev-tracker":       "트래커 개발자가 트래킹 스키마를",
-    "dev-filebrowser":   "파일브라우저 개발자가 디렉토리 규칙을",
-    "dev-admin":         "관리자 UI 개발자가 관리자 화면 구성을",
-    "dev-messages":      "메시지 개발자가 알림 채널/형식을",
-
-    "process-tagger":    "공정 태거가 태깅 스킴을",
-    "causal-analyst":    "원인 분석가가 분석 가설을",
-    "dvc-curator":       "DVC 큐레이터가 데이터 버전 정책을",
-    "adapter-engineer":  "어댑터 엔지니어가 외부 연동 방식을",
 }
 
 
