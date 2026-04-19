@@ -4,7 +4,7 @@
 // Each agent sits behind a desk; monitor glows when working.
 // The canteen (탕비실) holds MCPs (appliances) and Skills (recipe books).
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import Character from './Character';
 import SharedSprite, { POSE } from './Sprite';
 import { t } from './i18n';
@@ -42,6 +42,33 @@ const ROOM_STYLES = {
   canteen: { wall: '#2f4234', floor: '#6a8464', accent: '#8be28b' },
 };
 
+// Build a multi-band wall/floor gradient so every row of characters sits
+// against its own wall-above-floor band — matching what the sprite art
+// expects. Without this, row-2 characters end up on pure floor color
+// while their sprite still renders a wall/window above them, leaving a
+// visible "ceiling" mismatch (the product owner flagged this as the
+// white-rectangle issue). The math here mirrors the assign() layout —
+// each row occupies 240px starting at roomTop+40.
+function buildRoomBg(rowCount, rowHeight, headerPad, bottomPad, wall, floor) {
+  if (rowCount <= 1) {
+    // Original 2-band look for single-row rooms / canteen.
+    return `linear-gradient(to bottom, ${wall} 0%, ${wall} 45%, ${floor} 45%, ${floor} 100%)`;
+  }
+  const total = headerPad + rowCount * rowHeight + bottomPad;
+  const stops = [`${wall} 0px`, `${wall} ${headerPad}px`];
+  for (let i = 0; i < rowCount; i++) {
+    const rowStart = headerPad + i * rowHeight;
+    const rowMid   = rowStart + Math.round(rowHeight * 0.5);
+    const rowEnd   = rowStart + rowHeight;
+    if (i > 0) stops.push(`${wall} ${rowStart}px`);
+    stops.push(`${wall} ${rowMid}px`);
+    stops.push(`${floor} ${rowMid}px`);
+    stops.push(`${floor} ${rowEnd}px`);
+  }
+  stops.push(`${floor} ${total}px`);
+  return `linear-gradient(to bottom, ${stops.join(', ')})`;
+}
+
 function statusFor(state, lang) {
   const tbl = lang === 'ko' ? DESK_STATUS_KO : DESK_STATUS_EN;
   return tbl[state] || tbl.idle;
@@ -57,6 +84,13 @@ function Desk({ agent, x, y, onClick, onDoubleClick, isSelected, lang, tint }) {
     <div
       className={`desk-cell state-${state}${isSelected ? ' selected' : ''}`}
       style={{ left: x, top: y }}
+      // Stop pointerdown/up from reaching the parent's marquee-zoom
+      // handlers. Without this the parent captures the pointer and the
+      // synthesized click never lands on the desk — so clicking a
+      // character did nothing in custom mode (general mode works because
+      // it has no marquee handler).
+      onPointerDown={(e) => e.stopPropagation()}
+      onPointerUp={(e) => e.stopPropagation()}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       title={`${displayName} · ${agent.model} · ${statusText}`}
@@ -87,6 +121,8 @@ function CanteenItem({ item, x, y, onClick }) {
     <div
       className={`canteen-item${isMcp ? ' is-mcp' : ' is-skill'}`}
       style={{ left: x, top: y }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onPointerUp={(e) => e.stopPropagation()}
       onClick={onClick}
       title={`${isMcp ? 'MCP' : 'Skill'}: ${item.label}`}
     >
@@ -122,6 +158,7 @@ function CanteenItem({ item, x, y, onClick }) {
 export default function OfficeScene({
   topology, onSelect, selected, lang,
   mcps = [], skills = [], onSelectMcp, onSelectSkill,
+  backlog = [], reports = [], activity = [],
 }) {
   const rootRef = useRef(null);
   const [zoom, setZoom] = useState(0.75);
@@ -145,12 +182,15 @@ export default function OfficeScene({
     if (!byTeam[k]) byTeam[k] = [];
     byTeam[k].push(a);
   }
-  // Sort each team so its lead is the first cell in the room.
+  // Sort each team so its lead is the first cell in the room. Secondary
+  // sort by name keeps placement stable when an agent is added or
+  // retired mid-session — otherwise existing agents visibly shuffle.
   for (const k of Object.keys(byTeam)) {
     byTeam[k].sort((a, b) => {
-      const al = LEAD_TEAM_OF[a.name] ? -1 : 0;
-      const bl = LEAD_TEAM_OF[b.name] ? -1 : 0;
-      return al - bl;
+      const al = LEAD_TEAM_OF[a.name] ? 0 : 1;
+      const bl = LEAD_TEAM_OF[b.name] ? 0 : 1;
+      if (al !== bl) return al - bl;
+      return a.name.localeCompare(b.name);
     });
   }
 
@@ -428,17 +468,14 @@ export default function OfficeScene({
       onPointerCancel={onPointerUp}
       onDoubleClick={onDoubleClick}
     >
-      <div className="scene-toolbar">
-        <button className="scene-btn" onClick={() => setZoom(z => Math.min(MAX_ZOOM, +(z * 1.15).toFixed(2)))} title="확대">＋</button>
-        <button className="scene-btn" onClick={() => setZoom(z => Math.max(MIN_ZOOM, +(z / 1.15).toFixed(2)))} title="축소">－</button>
-        <button className="scene-btn" onClick={resetView} title={t('zoom.reset', lang)}>⌂</button>
-        <span className="scene-zoom">{Math.round(zoom * 100)}%</span>
-      </div>
-      <div className="scene-help">
-        {lang === 'ko'
-          ? '🖱️ 좌클릭+드래그 = 영역 확대 · 역방향 드래그 = 축소 · Shift+드래그 = 이동'
-          : '🖱️ left-drag = zoom into area · reverse-drag = zoom out · Shift+drag = pan'}
-      </div>
+      <div className="scene-help">{t('zoom.help', lang)}</div>
+      <SceneTodo
+        lang={lang}
+        working={agents.filter((a) => a.state === 'working')}
+        backlog={backlog}
+        reports={reports}
+        activity={activity}
+      />
       {marquee && (
         <div
           className="scene-marquee"
@@ -463,13 +500,21 @@ export default function OfficeScene({
           const style = ROOM_STYLES[r.team] || ROOM_STYLES.dev;
           const working = r.team === 'canteen' ? 0 : (byTeam[r.team] || []).filter((a) => a.state === 'working').length;
           const isCanteen = r.team === 'canteen';
+          const roomRows = (r.team === 'top' || r.team === 'canteen')
+            ? 1
+            : Math.max(1, (byTeam[r.team] || []).length === 0
+                ? 1
+                : Math.ceil((byTeam[r.team] || []).length / TEAM_COLS));
+          const roomBg = (r.team === 'top' || isCanteen)
+            ? `linear-gradient(to bottom, ${style.wall} 0%, ${style.wall} 45%, ${style.floor} 45%, ${style.floor} 100%)`
+            : buildRoomBg(roomRows, 240, 40, 20, style.wall, style.floor);
           return (
             <div
               key={r.key}
               className={`office-room room-${r.team}`}
               style={{
                 left: r.x, top: r.y, width: r.w, height: r.h,
-                background: `linear-gradient(to bottom, ${style.wall} 0%, ${style.wall} 45%, ${style.floor} 45%, ${style.floor} 100%)`,
+                background: roomBg,
                 borderColor: style.accent,
               }}
             >
@@ -536,4 +581,129 @@ export default function OfficeScene({
       </div>
     </div>
   );
+}
+
+// Left-dock overlay: click any row to expand the task list. Each task
+// gets a mgmt-lead-style plain-language description so the product
+// owner can scan without opening the full tab.
+function SceneTodo({ lang, working, backlog, reports, activity }) {
+  const [openSection, setOpenSection] = useState(null); // 'working' | 'next' | 'done' | null
+
+  // Working: pair each working agent with the most recent activity entry
+  // we can find for them — that's the closest thing to "what they're
+  // doing right now" without a dedicated task field.
+  const workingItems = useMemo(() => {
+    const recent = new Map();
+    for (const ev of (activity || [])) {
+      if (!ev?.agent || !ev?.detail) continue;
+      if (!recent.has(ev.agent)) recent.set(ev.agent, ev);
+    }
+    return (working || []).map((a) => ({
+      title: t(`agent.${a.name}`, lang) || a.name,
+      sub: a.name,
+      desc: plainDescForAgent(a, recent.get(a.name), lang),
+    }));
+  }, [working, activity, lang]);
+
+  const nextItems = useMemo(() => {
+    return (backlog || [])
+      .filter((b) => (b.status || '').toLowerCase() !== 'done')
+      .map((b) => ({
+        title: b.title || b.name || '?',
+        sub: b.team ? `@${b.team}` : '',
+        desc: plainDescForBacklog(b, lang),
+      }));
+  }, [backlog, lang]);
+
+  const doneItems = useMemo(() => {
+    return (reports || []).map((r) => ({
+      title: r.title || r.name || (lang === 'ko' ? '보고서' : 'report'),
+      sub: r.created ? new Date(r.created).toLocaleDateString(lang === 'ko' ? 'ko-KR' : 'en-US') : '',
+      desc: plainDescForReport(r, lang),
+    }));
+  }, [reports, lang]);
+
+  const sections = [
+    { key: 'working', icon: '⚡', label: lang === 'ko' ? '작업중' : 'Working', items: workingItems },
+    { key: 'next',    icon: '📋', label: lang === 'ko' ? '예정'   : 'Next',    items: nextItems },
+    { key: 'done',    icon: '✅', label: lang === 'ko' ? '완료'   : 'Done',    items: doneItems },
+  ];
+
+  return (
+    <div className="scene-todo">
+      {sections.map((s) => {
+        const isOpen = openSection === s.key;
+        return (
+          <div key={s.key}>
+            <div
+              className={`scene-todo-row${isOpen ? ' active' : ''}`}
+              onClick={() => setOpenSection(isOpen ? null : s.key)}
+            >
+              <span className="scene-todo-label">{s.icon} {s.label}</span>
+              <span className={`scene-todo-count${s.items.length === 0 ? ' zero' : ''}`}>
+                {s.items.length}
+              </span>
+              <span className="scene-todo-caret">›</span>
+            </div>
+            {isOpen && (
+              <div className="scene-todo-detail">
+                {s.items.length === 0 ? (
+                  <div className="scene-todo-item-empty">
+                    {lang === 'ko' ? '아직 없음' : 'Nothing here yet.'}
+                  </div>
+                ) : (
+                  s.items.map((item, i) => (
+                    <div className="scene-todo-item" key={i}>
+                      <span className="scene-todo-item-title">{item.title}</span>
+                      {item.sub && <span className="scene-todo-item-meta">{item.sub}</span>}
+                      <div className="scene-todo-item-desc">{item.desc}</div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Plain-language summaries — the mgmt-lead voice: short, non-technical,
+// tells the user WHAT the agent is doing, not the raw tool call.
+function plainDescForAgent(agent, recentEvent, lang) {
+  const role = agent.description || '';
+  const tail = recentEvent?.detail || '';
+  if (lang === 'ko') {
+    if (tail) return `지금은 「${tail.slice(0, 90)}」 를 진행 중입니다.` + (role ? ` 이 에이전트는 ${role.slice(0, 80)}.` : '');
+    if (role) return `이 에이전트는 ${role.slice(0, 140)}. 작업이 곧 시작됩니다.`;
+    return '작업이 할당됐고 곧 첫 출력이 나옵니다.';
+  }
+  if (tail) return `Currently: "${tail.slice(0, 90)}".` + (role ? ` This agent ${role.slice(0, 80)}.` : '');
+  if (role) return `This agent ${role.slice(0, 140)}. Work is about to start.`;
+  return 'Task assigned — first output is on its way.';
+}
+
+function plainDescForBacklog(item, lang) {
+  const desc = item.description || item.summary || '';
+  const team = item.team ? ` (${item.team} 팀 담당)` : '';
+  const prio = item.priority ? ` · 우선순위 ${item.priority}` : '';
+  if (lang === 'ko') {
+    if (desc) return desc.slice(0, 200) + team + prio;
+    return `팀 리드가 승인한 예정 작업입니다${team}${prio}. 곧 담당자가 배정됩니다.`;
+  }
+  const enTeam = item.team ? ` (owned by ${item.team})` : '';
+  const enPrio = item.priority ? ` · priority ${item.priority}` : '';
+  if (desc) return desc.slice(0, 200) + enTeam + enPrio;
+  return `Approved by a team lead${enTeam}${enPrio}. An owner will pick it up shortly.`;
+}
+
+function plainDescForReport(report, lang) {
+  const body = report.body || report.summary || report.description || '';
+  if (lang === 'ko') {
+    if (body) return body.slice(0, 220);
+    return '보고원이 정리한 완료 요약입니다. 탭에서 전체 본문을 볼 수 있어요.';
+  }
+  if (body) return body.slice(0, 220);
+  return 'Summary written by the reporter. Open the Reports tab for the full text.';
 }

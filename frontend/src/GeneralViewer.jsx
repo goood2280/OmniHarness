@@ -306,6 +306,7 @@ export default function GeneralViewer({ activity, topology, mcps, skills, lang, 
 
       <div className="general-body">
         <ArenaCanvas
+          lang={lang}
           overlayLeft={
             <div className="arena-wall-left">
               <div className="arena-wall-label">{t('canteen.mcp_label', lang)}</div>
@@ -509,7 +510,7 @@ const WORLD_H = 1100;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2.2;
 
-function ArenaCanvas({ children, overlayLeft, overlayRight }) {
+function ArenaCanvas({ children, overlayLeft, overlayRight, lang }) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [didFit, setDidFit] = useState(false);
@@ -652,12 +653,12 @@ function ArenaCanvas({ children, overlayLeft, overlayRight }) {
       {overlayLeft && <div className="arena-overlay-left">{overlayLeft}</div>}
       {overlayRight && <div className="arena-overlay-right">{overlayRight}</div>}
       <div className="scene-help" style={{ top: 'auto', bottom: 12 }}>
-        🖱️ 좌클릭+드래그 = 영역 확대 · 역방향 드래그 = 축소 · Shift+드래그 = 이동
+        {t('zoom.help', lang)}
       </div>
       <div className="arena-canvas-toolbar">
-        <button className="arena-canvas-btn" onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z * 1.15))} title="Zoom in">＋</button>
-        <button className="arena-canvas-btn" onClick={() => setZoom((z) => Math.max(MIN_ZOOM, z / 1.15))} title="Zoom out">－</button>
-        <button className="arena-canvas-btn" onClick={reset} title="Reset view">⌂</button>
+        <button className="arena-canvas-btn" onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z * 1.15))} title={t('zoom.in', lang)}>＋</button>
+        <button className="arena-canvas-btn" onClick={() => setZoom((z) => Math.max(MIN_ZOOM, z / 1.15))} title={t('zoom.out', lang)}>－</button>
+        <button className="arena-canvas-btn" onClick={reset} title={t('zoom.reset', lang)}>⌂</button>
         <span className="arena-canvas-zoom">{Math.round(zoom * 100)}%</span>
       </div>
     </div>

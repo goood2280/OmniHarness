@@ -2,9 +2,9 @@
 // Lists existing projects and lets the user pick one or create a new one.
 
 import { useEffect, useState } from 'react';
-import { t } from './i18n';
+import { t, LANG_OPTIONS } from './i18n';
 
-export default function ProjectList({ onOpen, onBack, lang }) {
+export default function ProjectList({ onOpen, onBack, lang, setLang }) {
   const [projects, setProjects] = useState([]);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ company: '', industry: '', philosophy: '', goal: '' });
@@ -61,7 +61,10 @@ export default function ProjectList({ onOpen, onBack, lang }) {
     return (
       <div className="plist-overlay">
         <div className="plist-card">
-          <button className="plist-back" onClick={() => setCreating(false)}>← {t('plist.back_to_list', lang)}</button>
+          <div className="plist-topbar">
+            <button className="plist-back" onClick={() => setCreating(false)}>← {t('plist.back_to_list', lang)}</button>
+            <LangPicker lang={lang} setLang={setLang} />
+          </div>
           <h2>{t('plist.new_title', lang)}</h2>
           <p className="plist-sub">{t('plist.new_sub', lang)}</p>
 
@@ -96,7 +99,10 @@ export default function ProjectList({ onOpen, onBack, lang }) {
   return (
     <div className="plist-overlay">
       <div className="plist-card plist-card-wide">
-        <button className="plist-back" onClick={onBack}>← {t('plist.back_to_mode', lang)}</button>
+        <div className="plist-topbar">
+          <div />
+          <LangPicker lang={lang} setLang={setLang} />
+        </div>
         <h2>{t('plist.title', lang)}</h2>
         <p className="plist-sub">{t('plist.sub', lang)}</p>
 
@@ -127,6 +133,27 @@ export default function ProjectList({ onOpen, onBack, lang }) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Small inline language picker used on both the list view and the
+// create-project form. Reuses the global `.lang-switch` styling from
+// the HUD so there's only one visual convention for this control.
+function LangPicker({ lang, setLang }) {
+  if (!setLang) return null;
+  return (
+    <div className="lang-switch plist-lang-switch" role="group" aria-label="Language">
+      {LANG_OPTIONS.map((opt) => (
+        <button
+          key={opt.code}
+          className={'lang-btn' + (lang === opt.code ? ' active' : '')}
+          onClick={() => setLang(opt.code)}
+          title={opt.label}
+        >
+          {opt.code.toUpperCase()}
+        </button>
+      ))}
     </div>
   );
 }

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import OfficeScene from './OfficeScene';
-import GeneralViewer from './GeneralViewer';
-import ModeSelect from './ModeSelect';
 import ProjectList from './ProjectList';
+import Tutorial from './Tutorial';
 import HUD from './HUD';
 import AgentPanel from './AgentPanel';
 import MissionBanner from './MissionBanner';
@@ -51,15 +50,23 @@ export default function App() {
     try { localStorage.setItem(LANG_KEY, lang); } catch { /* ignore */ }
   }, [lang]);
 
-  // Boot: resolve current mode + active project from backend
+  // Boot: force custom mode + resolve active project.
+  // General mode is hidden — the project owner decided to focus custom.
   useEffect(() => {
     (async () => {
       try {
-        const [m, p] = await Promise.all([
+        const [mResp, p] = await Promise.all([
           fetch('/api/mode').then((r) => r.json()),
           fetch('/api/projects').then((r) => r.json()),
         ]);
-        setMode(m.mode || null);
+        if (mResp.mode !== 'custom') {
+          await fetch('/api/mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'custom' }),
+          }).catch(() => {});
+        }
+        setMode('custom');
         setActiveProject(p.active || '');
       } finally {
         setModeLoading(false);
@@ -166,16 +173,10 @@ export default function App() {
   if (modeLoading) return <div className="loading">{t('loading.app', lang)}</div>;
   if (err) return <div className="loading">{t('loading.error', lang)}: {err}</div>;
 
-  // ─── Mode not yet chosen → show the first-visit popup.
-  // Custom mode from here MUST pass through the project list first, so we
-  // force-clear the active project even if one is persisted.
-  if (!mode) {
-    return <ModeSelect onChoose={(m) => chooseMode(m, { resetProject: m === 'custom' })} lang={lang} />;
-  }
-
-  // ─── Custom mode without an active project → list/create screen
-  if (mode === 'custom' && !activeProject) {
-    return <ProjectList onOpen={openProject} onBack={exitToModeSelect} lang={lang} />;
+  // ─── No active project → straight to list/create. General mode is
+  //     disabled, so there's no "back to mode select" step.
+  if (!activeProject) {
+    return <ProjectList onOpen={openProject} onBack={null} lang={lang} setLang={setLang} />;
   }
 
   // After this point we need topology + mission loaded at least once.
@@ -198,8 +199,10 @@ export default function App() {
   const waiting = topology.agents.filter((a) => a.state === 'waiting').length;
   const idle = topology.agents.filter((a) => a.state === 'idle').length;
 
+  const panelOpen = !!(selected || selectedMcp);
+
   return (
-    <div className="app">
+    <div className={`app${panelOpen ? ' app--panel-open' : ''}`}>
       {mode === 'custom' && mission && (
         <MissionBanner mission={mission} onEdit={() => setWizardOpen(true)} lang={lang} />
       )}
@@ -223,29 +226,19 @@ export default function App() {
         onSwitchProject={() => setActiveProject('')}
         hasActiveProject={!!activeProject && mode === 'custom'}
       />
-      {mode === 'custom' ? (
-        <OfficeScene
-          topology={topology}
-          onSelect={setSelected}
-          selected={selected}
-          lang={lang}
-          mcps={mcps}
-          skills={skills}
-          onSelectMcp={setSelectedMcp}
-          onSelectSkill={setSelectedMcp}
-        />
-      ) : (
-        <GeneralViewer
-          activity={activity}
-          topology={topology}
-          mcps={mcps}
-          skills={skills}
-          lang={lang}
-          onSelect={setSelected}
-          onSelectMcp={setSelectedMcp}
-          onSelectSkill={setSelectedMcp}
-        />
-      )}
+      <OfficeScene
+        topology={topology}
+        onSelect={(a) => { setSelectedMcp(null); setSelected(a); }}
+        selected={selected}
+        lang={lang}
+        mcps={mcps}
+        skills={skills}
+        backlog={backlog}
+        reports={reports}
+        activity={activity}
+        onSelectMcp={(m) => { setSelected(null); setSelectedMcp(m); }}
+        onSelectSkill={(m) => { setSelected(null); setSelectedMcp(m); }}
+      />
 
       <TabPanel
         topology={topology}
@@ -264,9 +257,10 @@ export default function App() {
         lang={lang}
         mode={mode}
       />
-      <AgentPanel agent={selected} onClose={() => setSelected(null)} lang={lang} />
+      <AgentPanel agent={selected} onClose={() => setSelected(null)} lang={lang} mode={mode} />
       <McpPanel mcp={selectedMcp} onClose={() => setSelectedMcp(null)} lang={lang} />
       <BedrockGuide open={guideOpen} onClose={() => setGuideOpen(false)} lang={lang} />
+      <Tutorial lang={lang} setLang={setLang} onDone={() => {}} />
       {wizardOpen && mission && (
         <Onboarding
           mission={{ ...mission, team_confirmed: false }}

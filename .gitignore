@@ -34,3 +34,7 @@ projects/
 
 # ── Scratch ──
 _scratch_*
+
+# Local-only sprite-sheet backups from normalization passes
+frontend/public/tiles/chars.pre-alpha-backup/
+frontend/public/tiles/chars.pre-normalize-backup/

@@ -1,7 +1,7 @@
 // i18n.js — Korean + English translations for OmniHarness viewer.
 // No external deps. Importers use: `import { t, LANG_OPTIONS, DEFAULT_LANG } from './i18n'`.
 
-export const DEFAULT_LANG = 'ko';
+export const DEFAULT_LANG = 'en';
 
 export const LANG_OPTIONS = [
   { code: 'ko', label: '한국어' },
@@ -92,7 +92,7 @@ export const TRANSLATIONS = {
   'wiz.none':         { ko: '(없음)', en: '(none)' },
   'wiz.next':         { ko: '다음 →', en: 'Next →' },
   'wiz.back':         { ko: '← 뒤로', en: '← Back' },
-  'wiz.confirm':      { ko: '✓ 확정하고 시작', en: '✓ Confirm & start' },
+  'wiz.confirm':      { ko: '✓ 확인', en: '✓ Confirm' },
   'wiz.saving':       { ko: '저장 중…', en: 'Saving…' },
   'wiz.thinking':     { ko: '팀 구성 중…', en: 'Designing team…' },
   'wiz.roster_total': { ko: '총 에이전트', en: 'Total agents' },
@@ -254,6 +254,10 @@ export const TRANSLATIONS = {
   'zoom.in':    { ko: '확대', en: 'Zoom in' },
   'zoom.out':   { ko: '축소', en: 'Zoom out' },
   'zoom.reset': { ko: '원래 크기', en: 'Reset zoom' },
+  'zoom.help':  {
+    ko: '🖱️ 좌클릭+드래그 = 영역 확대 · 역방향 드래그 = 축소 · Shift+드래그 = 이동',
+    en: '🖱️ left-drag = zoom into area · reverse-drag = zoom out · Shift+drag = pan',
+  },
 
   // Guide (Bedrock)
   'guide.button':        { ko: '가이드', en: 'GUIDE' },

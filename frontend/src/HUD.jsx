@@ -20,32 +20,19 @@ export default function HUD({
   return (
     <div className="hud">
       <div className="hud-left">
-        <div className="mode-switch" role="group" aria-label={t('hud.mode.title', lang)}>
-          <button
-            className={'mode-btn' + (mode === 'custom' ? ' active' : '')}
-            onClick={() => onModeChange && onModeChange('custom')}
-            title={t('hud.mode.title', lang)}
-          >
-            🏢 {t('mode.custom', lang)}
-          </button>
-          <button
-            className={'mode-btn' + (mode === 'general' ? ' active' : '')}
-            onClick={() => onModeChange && onModeChange('general')}
-            title={t('hud.mode.title', lang)}
-          >
-            🧭 {t('mode.general', lang)}
-          </button>
-        </div>
         {hasActiveProject && onSwitchProject && (
           <button className="switch-project-btn" onClick={onSwitchProject} title={t('hud.switch_project', lang)}>
             ⇆ {t('hud.switch_project', lang)}
           </button>
         )}
-        <span className="sep">|</span>
-        <span>{t('hud.agents', lang)}: {agentCount}</span>
-        <span className="state state-working">⚡ {t('hud.work', lang)} {working}</span>
-        <span className="state state-waiting">⏳ {t('hud.wait', lang)} {waiting}</span>
-        <span className="state state-idle">💤 {t('hud.idle', lang)} {idle}</span>
+        {mode === 'custom' && (
+          <>
+            <span className="sep">|</span>
+            <span>{t('hud.agents', lang)}: {agentCount}</span>
+            <span className="state state-working">⚡ {t('hud.work', lang)} {working}</span>
+            <span className="state state-idle">💤 {t('hud.wait', lang)} {waiting + idle}</span>
+          </>
+        )}
       </div>
       <div className="hud-center">
         <span className="cost">
@@ -53,9 +40,13 @@ export default function HUD({
         </span>
       </div>
       <div className="hud-right">
-        <span className="pill pill-opus">OPUS {opus}</span>
-        <span className="pill pill-sonnet">SONNET {sonnet}</span>
-        <span className="pill pill-haiku">HAIKU {haiku || 0}</span>
+        {mode === 'custom' && (
+          <>
+            <span className="pill pill-opus">OPUS {opus}</span>
+            <span className="pill pill-sonnet">SONNET {sonnet}</span>
+            <span className="pill pill-haiku">HAIKU {haiku || 0}</span>
+          </>
+        )}
         <button className="guide-btn" onClick={onGuideOpen} title="Claude Code CLI / Bedrock 설정">
           ☁ {t('guide.button', lang)}
         </button>

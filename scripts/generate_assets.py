@@ -533,9 +533,37 @@ def _chroma_key(path: Path) -> None:
         arr[..., 1][killed3] = 0
         arr[..., 2][killed3] = 0
 
+    # ── Final pass: strip near-white backgrounds. Some Nano Banana
+    #    generations drop the magenta prompt and return white-backdrop
+    #    sheets instead — those render as visible white rectangles when
+    #    composited onto the office scene. Kill them too.
+    white_cleared = _strip_white_bg(arr, threshold=240)
+
     Image.fromarray(arr, "RGBA").save(path)
     print(f"  [chroma] {path.name}: killed={cleared}, faded={faded}, "
-          f"border_black={border_removed}, eroded={eroded}")
+          f"border_black={border_removed}, eroded={eroded}, "
+          f"white_cleared={white_cleared}")
+
+
+def _strip_white_bg(arr, threshold: int = 240) -> int:
+    """Alpha-out every pixel whose RGB is all >= threshold (near-white).
+
+    Only runs if at least one corner pixel is near-white — avoids
+    nuking legitimate white highlights on art that already had a clean
+    transparent background."""
+    try:
+        import numpy as np
+    except ImportError:
+        return 0
+    h, w, _ = arr.shape
+    corners = [arr[0, 0], arr[0, w - 1], arr[h - 1, 0], arr[h - 1, w - 1]]
+    if not any(c[0] >= threshold and c[1] >= threshold and c[2] >= threshold for c in corners):
+        return 0
+    r = arr[..., 0]; g = arr[..., 1]; b = arr[..., 2]
+    mask = (r >= threshold) & (g >= threshold) & (b >= threshold)
+    changed = int(mask.sum())
+    arr[..., 3][mask] = 0
+    return changed
 
 
 def _erode_partial_alpha(arr, iterations: int = 2) -> int:

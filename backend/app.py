@@ -450,7 +450,17 @@ def current_roster() -> list[str]:
     else:
         dev = DEV_CATALOG
         domain = DOMAIN_CATALOG
-    roster = list(BASE_ROLES.keys()) + [n for n in dev if n in DEV_CATALOG] + [n for n in domain if n in DOMAIN_CATALOG]
+    # LLM-proposed custom agents ride in their own lists — merge them in so
+    # the topology shows the orchestrator's real team, not just catalog hits.
+    custom_dev = [s.get("name") for s in mission.get("custom_dev_specs", []) if isinstance(s, dict) and s.get("name")]
+    custom_domain = [s.get("name") for s in mission.get("custom_domain_specs", []) if isinstance(s, dict) and s.get("name")]
+    roster = (
+        list(BASE_ROLES.keys())
+        + [n for n in dev if n in DEV_CATALOG]
+        + [n for n in domain if n in DOMAIN_CATALOG]
+        + custom_dev
+        + custom_domain
+    )
     return roster
 
 
@@ -461,12 +471,22 @@ def team_of(name: str) -> tuple[str, str]:
         return ("dev", "#7cc7e8")
     if name in DOMAIN_CATALOG:
         return ("domain", "#ffd54f")
+    # Custom specs from LLM proposal — look up in active mission to
+    # resolve the team bucket.
+    m = load_mission()
+    for spec in m.get("custom_dev_specs", []) or []:
+        if isinstance(spec, dict) and spec.get("name") == name:
+            return ("dev", "#7cc7e8")
+    for spec in m.get("custom_domain_specs", []) or []:
+        if isinstance(spec, dict) and spec.get("name") == name:
+            return ("domain", "#ffd54f")
     return ("misc", "#999999")
 
 
 def load_agents() -> list[dict]:
     agents = []
     roster = set(current_roster())
+    seen = set()
     for f in sorted(TEMPLATES.glob("*.md")):
         if f.stem.lower() == "readme":
             continue
@@ -484,6 +504,36 @@ def load_agents() -> list[dict]:
             "state": STATES.get(name, "idle"),
         })
         agents.append(meta)
+        seen.add(name)
+    # Merge LLM-proposed custom agents whose specs live inline in
+    # mission.json — they don't have a template .md file on disk.
+    mission = load_mission()
+    for spec_list, team_key, color in [
+        (mission.get("custom_dev_specs", []) or [], "dev", "#7cc7e8"),
+        (mission.get("custom_domain_specs", []) or [], "domain", "#ffd54f"),
+    ]:
+        for spec in spec_list:
+            if not isinstance(spec, dict):
+                continue
+            name = spec.get("name")
+            if not name or name in seen:
+                continue
+            if name not in roster:
+                continue
+            tools = spec.get("tools") or ""
+            tools_list = [t.strip() for t in tools.split(",") if t.strip()] if isinstance(tools, str) else list(tools or [])
+            agents.append({
+                "name": name,
+                "description": spec.get("description") or "",
+                "model": spec.get("model") or "sonnet",
+                "tools": tools_list,
+                "body": spec.get("body") or spec.get("description") or "",
+                "team": team_key,
+                "color": color,
+                "state": STATES.get(name, "idle"),
+                "custom": True,
+            })
+            seen.add(name)
     return agents
 
 
@@ -830,25 +880,189 @@ def propose_team():
     mission = load_mission()
     if mission.get("placeholder"):
         raise HTTPException(400, "mission must be set first")
-    dev, domain, reason = _propose_team(mission)
-    mission["proposed_dev_agents"] = dev
-    mission["proposed_domain_agents"] = domain
-    mission["proposal_reason"] = reason
+    # Prefer LLM-driven proposal when an API provider is wired up.
+    # Heuristic is only the fallback — it's catalog-locked and can't
+    # invent project-specific agent names.
+    provider = _detect_provider()
+    llm_result = None
+    if provider in ("anthropic", "bedrock"):
+        try:
+            llm_result = _propose_team_via_llm(mission, provider)
+        except Exception as e:
+            log_event("orchestrator", "error", f"LLM 팀 제안 실패, 휴리스틱으로 폴백: {e}")
+            llm_result = None
+
+    if llm_result is not None:
+        dev_specs, domain_specs, reason = llm_result
+        # Names-only arrays keep backward compatibility with existing
+        # wizard/roster logic; the full specs ride in custom_*_specs so
+        # load_agents() can merge them into topology.
+        mission["proposed_dev_agents"] = [s["name"] for s in dev_specs]
+        mission["proposed_domain_agents"] = [s["name"] for s in domain_specs]
+        mission["proposed_custom_dev_specs"] = dev_specs
+        mission["proposed_custom_domain_specs"] = domain_specs
+        mission["proposal_reason"] = reason
+        mission["proposal_source"] = provider
+    else:
+        dev, domain, reason = _propose_team(mission)
+        mission["proposed_dev_agents"] = dev
+        mission["proposed_domain_agents"] = domain
+        mission["proposed_custom_dev_specs"] = []
+        mission["proposed_custom_domain_specs"] = []
+        mission["proposal_reason"] = reason
+        mission["proposal_source"] = "heuristic"
+
     save_mission(mission)
-    log_event("orchestrator", "team", f"팀 구성 제안 — dev {len(dev)} · domain {len(domain)}")
+    log_event("orchestrator", "team",
+              f"팀 구성 제안 [{mission['proposal_source']}] — dev {len(mission['proposed_dev_agents'])} · domain {len(mission['proposed_domain_agents'])}")
     return mission
+
+
+def _propose_team_via_llm(mission: dict, provider: str):
+    """Ask Claude to design a project-specific team. Returns
+    (dev_specs, domain_specs, reason). Each spec is a dict with
+    {name, description, model, tools}."""
+    import json as _json
+    import re as _re
+
+    system = (
+        "You are the orchestrator of an agent team for a Claude Code project. "
+        "Your job here is to propose the most useful DEV and DOMAIN agents for "
+        "the project described below. Think carefully about what roles the "
+        "project actually needs — not what some generic template would pick. "
+        "Do NOT over-propose. 3–6 dev agents is usually the right range.\n\n"
+        "BASE TEAM is fixed and always present (do NOT repeat): orchestrator, "
+        "dev-lead, mgmt-lead, eval-lead, reporter, hr, auditor, ux-reviewer, "
+        "dev-verifier, user-role-tester, admin-role-tester, security-auditor, "
+        "domain-researcher.\n\n"
+        "Your additions fill the gaps between the base team and what this "
+        "project specifically needs."
+    )
+    user = (
+        f"Project:\n"
+        f"- Company: {mission.get('company') or '—'}\n"
+        f"- Industry: {mission.get('industry') or '—'}\n"
+        f"- Philosophy: {mission.get('philosophy') or '—'}\n"
+        f"- Goal: {mission.get('goal') or '—'}\n\n"
+        "Respond with ONLY a JSON object — no prose, no markdown fences — in "
+        "this exact shape:\n"
+        "{\n"
+        '  "dev_agents": [\n'
+        '    {"name": "dev-<kebab-case>", "description": "1-2 sentences in user language", "model": "sonnet"|"opus", "tools": "Read, Write, Edit, Bash, Grep, Glob"}\n'
+        "  ],\n"
+        '  "domain_agents": [\n'
+        '    {"name": "<kebab-case>", "description": "1-2 sentences", "model": "sonnet"|"opus", "tools": "Read, Grep, Glob"}\n'
+        "  ],\n"
+        '  "reason": "One sentence explaining why this team fits the project"\n'
+        "}\n\n"
+        "Rules:\n"
+        "- dev agent names MUST start with `dev-` (kebab-case after).\n"
+        "- domain agent names are kebab-case without prefix.\n"
+        "- Use Opus only for agents that need deep reasoning; default to Sonnet.\n"
+        "- Write description in the same language as the project goal.\n"
+        "- No trailing commas, no comments."
+    )
+
+    text = _llm_oneshot(system, user, provider)
+    # Strip any markdown fencing the model might still add.
+    m = _re.search(r"\{.*\}", text, _re.DOTALL)
+    if not m:
+        raise RuntimeError(f"no JSON object in LLM response: {text[:200]}")
+    payload = _json.loads(m.group(0))
+
+    def _clean_specs(raw, is_dev):
+        out = []
+        for spec in (raw or []):
+            if not isinstance(spec, dict):
+                continue
+            name = (spec.get("name") or "").strip()
+            if not name:
+                continue
+            # Enforce naming convention so topology team-bucket is correct.
+            if is_dev and not name.startswith("dev-"):
+                name = "dev-" + name.lstrip("-")
+            model = (spec.get("model") or "sonnet").lower()
+            if model not in ("sonnet", "opus", "haiku"):
+                model = "sonnet"
+            out.append({
+                "name": name,
+                "description": (spec.get("description") or "").strip(),
+                "model": model,
+                "tools": (spec.get("tools") or "Read, Write, Edit, Bash, Grep, Glob").strip(),
+                "team": "dev" if is_dev else "domain",
+                "custom": True,
+            })
+        return out
+
+    dev_specs = _clean_specs(payload.get("dev_agents"), True)
+    domain_specs = _clean_specs(payload.get("domain_agents"), False)
+    reason = (payload.get("reason") or "").strip() or "LLM-generated team proposal."
+    return dev_specs, domain_specs, reason
+
+
+def _llm_oneshot(system: str, user: str, provider: str) -> str:
+    """Single-turn call to Anthropic or Bedrock. Returns the text body."""
+    if provider == "anthropic":
+        from anthropic import Anthropic
+        client = Anthropic()
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-7")
+        resp = client.messages.create(
+            model=model,
+            max_tokens=2000,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        parts = []
+        for blk in resp.content:
+            if getattr(blk, "type", None) == "text":
+                parts.append(blk.text)
+        return "\n".join(parts)
+    if provider == "bedrock":
+        import boto3
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        model = os.environ.get("ANTHROPIC_MODEL", "anthropic.claude-opus-4-7-v1:0")
+        client = boto3.client("bedrock-runtime", region_name=region)
+        resp = client.converse(
+            modelId=model,
+            messages=[{"role": "user", "content": [{"text": user}]}],
+            system=[{"text": system}],
+            inferenceConfig={"maxTokens": 2000},
+        )
+        out = resp.get("output", {}).get("message", {})
+        parts = [c.get("text", "") for c in out.get("content", []) if c.get("text")]
+        return "\n".join(parts)
+    raise RuntimeError(f"no LLM provider available ({provider})")
 
 
 @app.post("/api/mission/confirm_team")
 def confirm_team(body: TeamConfirm):
-    dev = [x for x in body.dev_agents if x in DEV_CATALOG]
-    domain = [x for x in body.domain_agents if x in DOMAIN_CATALOG]
     mission = load_mission()
-    mission["dev_agents"] = dev
-    mission["domain_agents"] = domain
+    dev_catalog_agents = [x for x in body.dev_agents if x in DEV_CATALOG]
+    domain_catalog_agents = [x for x in body.domain_agents if x in DOMAIN_CATALOG]
+
+    # Carry over LLM-proposed custom specs for names the user kept.
+    kept_dev_names = set(body.dev_agents)
+    kept_domain_names = set(body.domain_agents)
+    proposed_dev_specs = mission.get("proposed_custom_dev_specs", []) or []
+    proposed_domain_specs = mission.get("proposed_custom_domain_specs", []) or []
+    custom_dev_specs = [
+        s for s in proposed_dev_specs
+        if isinstance(s, dict) and s.get("name") in kept_dev_names
+    ]
+    custom_domain_specs = [
+        s for s in proposed_domain_specs
+        if isinstance(s, dict) and s.get("name") in kept_domain_names
+    ]
+
+    mission["dev_agents"] = dev_catalog_agents
+    mission["domain_agents"] = domain_catalog_agents
+    mission["custom_dev_specs"] = custom_dev_specs
+    mission["custom_domain_specs"] = custom_domain_specs
     mission["team_confirmed"] = True
     save_mission(mission)
-    log_event("orchestrator", "team", f"팀 구성 확정 — dev {len(dev)} · domain {len(domain)}")
+    total = len(dev_catalog_agents) + len(custom_dev_specs) + len(domain_catalog_agents) + len(custom_domain_specs)
+    log_event("orchestrator", "team",
+              f"팀 구성 확정 — dev {len(dev_catalog_agents)}+{len(custom_dev_specs)} custom · domain {len(domain_catalog_agents)}+{len(custom_domain_specs)} custom · 총 {total}")
     return mission
 
 
@@ -1224,9 +1438,56 @@ def decide_evolution(eid: str, body: EvolutionDecision):
             item["decided"] = now_iso()
             item["decision_note"] = body.note
             log_event("user", "evolution",
-                      f"자가진화 결정({eid}): {body.decision}" + (f" — {body.note}" if body.note else ""))
+                      f"감사 제안 결정({eid}): {body.decision}" + (f" — {body.note}" if body.note else ""))
+            # Accepted new_agent / retire_agent proposals must materialize
+            # as actual roster changes — otherwise the audit tab is just
+            # advisory. Mutates the active project's mission.json.
+            if body.decision == "accepted" and item["kind"] in ("new_agent", "retire_agent"):
+                _apply_roster_change(item)
             return item
     raise HTTPException(404, "evolution proposal not found")
+
+
+def _apply_roster_change(item: dict):
+    """Apply an accepted new_agent / retire_agent proposal to mission.json.
+
+    Payload contract:
+      { "name": "<agent-id>", "team": "dev" | "domain" }
+
+    Only names present in DEV_CATALOG / DOMAIN_CATALOG are accepted;
+    unknown names are ignored (the orchestrator can extend the catalog
+    separately). The orchestrator + team-lead unanimity rule is applied
+    upstream when the proposal is raised — by the time this function
+    runs, the user has already countersigned the decision in the UI.
+    """
+    payload = item.get("payload") or {}
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return
+    mission = load_mission()
+    dev = list(mission.get("dev_agents", []))
+    domain = list(mission.get("domain_agents", []))
+    if item["kind"] == "new_agent":
+        if name in DEV_CATALOG and name not in dev:
+            dev.append(name)
+        elif name in DOMAIN_CATALOG and name not in domain:
+            domain.append(name)
+        else:
+            return
+        log_event("orchestrator", "team",
+                  f"감사 수락 → 에이전트 추가: {name}")
+    elif item["kind"] == "retire_agent":
+        if name in dev:
+            dev.remove(name)
+        elif name in domain:
+            domain.remove(name)
+        else:
+            return
+        log_event("orchestrator", "team",
+                  f"감사 수락 → 에이전트 정리: {name}")
+    mission["dev_agents"] = dev
+    mission["domain_agents"] = domain
+    save_mission(mission)
 
 
 # ── Web chat (orchestrator-backed) ──────────────────────────────────

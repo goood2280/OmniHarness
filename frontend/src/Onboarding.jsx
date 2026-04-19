@@ -176,6 +176,24 @@ export default function Onboarding({ mission, onSave, lang, onClose }) {
             <h2>{L('wiz.title2')}</h2>
             <p className="wizard-hint">{L('wiz.hint2').replace('{company}', form.company)}</p>
 
+            {proposal.proposal_source === 'heuristic' && (
+              <div className="wizard-warning">
+                <span className="wizard-warning-tag">⚠️</span>
+                <span>
+                  {lang === 'ko'
+                    ? 'LLM API 가 연결되지 않아 키워드 휴리스틱으로 제안된 팀입니다. 프로젝트에 딱 맞는 팀을 받으려면 HUD 의 ☁ 가이드에서 Anthropic / Bedrock 키를 설정하고 다시 시도하세요.'
+                    : 'No LLM API connected — this proposal came from keyword heuristics. For a project-specific team, wire up Anthropic or Bedrock via the ☁ GUIDE in the HUD and retry.'}
+                </span>
+              </div>
+            )}
+            {proposal.proposal_source && proposal.proposal_source !== 'heuristic' && (
+              <div className="wizard-provider">
+                {lang === 'ko'
+                  ? `🧠 오케스트레이터(${proposal.proposal_source}) 가 이 프로젝트에 맞춰 설계한 팀`
+                  : `🧠 Team designed by the orchestrator (${proposal.proposal_source}) for this project`}
+              </div>
+            )}
+
             {proposal.proposal_reason && (
               <div className="wizard-reason">
                 <span className="wizard-reason-tag">💡 {L('wiz.reason')}</span>
@@ -216,10 +234,17 @@ export default function Onboarding({ mission, onSave, lang, onClose }) {
                     <span className="wizard-chip-tick">✓</span>
                   </div>
                 ))}
+              {(proposal.proposed_custom_dev_specs || []).map((s) => (
+                <div key={s.name} className="wizard-chip wizard-chip-base wizard-chip-readonly wizard-chip-custom">
+                  <span className="wizard-chip-name">{s.name}</span>
+                  {s.description && <span className="wizard-chip-note">{s.description}</span>}
+                  <span className="wizard-chip-tick">✨</span>
+                </div>
+              ))}
             </div>
 
             {/* Domain catalog — same read-only treatment */}
-            {domainSel.length > 0 && (
+            {(domainSel.length > 0 || (proposal.proposed_custom_domain_specs || []).length > 0) && (
               <>
                 <h3 className="wizard-section">{L('wiz.domain_label')}</h3>
                 <div className="wizard-list">
@@ -231,6 +256,13 @@ export default function Onboarding({ mission, onSave, lang, onClose }) {
                         <span className="wizard-chip-tick">✓</span>
                       </div>
                     ))}
+                  {(proposal.proposed_custom_domain_specs || []).map((s) => (
+                    <div key={s.name} className="wizard-chip wizard-chip-base wizard-chip-readonly wizard-chip-custom">
+                      <span className="wizard-chip-name">{s.name}</span>
+                      {s.description && <span className="wizard-chip-note">{s.description}</span>}
+                      <span className="wizard-chip-tick">✨</span>
+                    </div>
+                  ))}
                 </div>
               </>
             )}
